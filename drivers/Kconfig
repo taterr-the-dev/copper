@@ -1,0 +1,68 @@
+menu "Console and display"
+
+config CONSOLE
+	bool "Unified kernel console"
+	default y
+
+config SERIAL_UART
+	bool "UART serial console"
+	depends on CONSOLE
+	default y
+
+config SERIAL_PORT
+	int "Serial port index"
+	depends on SERIAL_UART
+	default 0
+
+config SERIAL_BAUD
+	int "Serial baud rate"
+	depends on SERIAL_UART
+	default 115200
+
+config VGA_TEXT
+	bool "VGA text console"
+	depends on CONSOLE
+	default y
+
+config VGA_WIDTH
+	int "VGA text columns"
+	depends on VGA_TEXT
+	default 80
+
+config VGA_HEIGHT
+	int "VGA text rows"
+	depends on VGA_TEXT
+	default 25
+
+config TTY
+	bool "Enable TTY/PTY Subsystem"
+	default y
+	help
+	  Enables the core TTY layer, line discipline, and Pseudo-Terminals.
+
+endmenu
+
+menu "Block devices"
+
+config RAMDISK
+	bool "Multiboot module RAM disk"
+	default y
+
+config PCI_RAMDISK
+    bool "PCI-based RAM disk (ivshmem)"
+    default y
+
+config ATA
+	bool "ATA IDE PIO disk driver"
+	default y
+
+endmenu
+
+menu "Input devices"
+
+config PS2_KEYBOARD
+	bool "PS/2 keyboard driver"
+	depends on INTERRUPTS
+	default y
+
+endmenu

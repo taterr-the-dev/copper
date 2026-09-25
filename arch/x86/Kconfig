@@ -1,0 +1,14 @@
+#
+# x86 Architecture Configuration
+#
+
+config X86_64
+	bool "64-bit kernel"
+	depends on ARCH_X86
+	default y
+	help
+		Build a 64-bit kernel for x86-64 processors.
+
+config SERIAL_BAUD
+	int "Default serial baud rate"
+	default 115200

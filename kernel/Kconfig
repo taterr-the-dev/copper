@@ -1,0 +1,173 @@
+menu "Boot options"
+
+config MULTIBOOT
+	bool "Multiboot boot protocol"
+	default y
+
+config FLAT_BINARY_BOOT
+	bool "Boot as raw flat binary"
+	default y
+
+endmenu
+
+menu "Executable formats and loaders"
+
+config ELF_LOADER
+	bool "ELF binary loader"
+	default y
+
+config ELF_64
+	bool "64-bit ELF support"
+	depends on ELF_LOADER
+	default y
+
+config ELF_MAX_SEGMENTS
+	int "Maximum program segments per ELF"
+	depends on ELF_LOADER
+	default 8
+
+config BINFMT_ELF
+	bool "ELF executable format"
+	depends on ELF_LOADER
+	default y
+
+config BINFMT_SHEBANG
+	bool "Shebang script executable support"
+	default y
+
+config EXECVE
+	bool "execve ELF loader"
+	depends on USERMODE
+	default y
+
+config ELF_INTERP
+	bool "ELF interpreter support"
+	depends on EXECVE
+	default y
+	help
+	  Load the program interpreter and build the Linux auxv stack
+	  so dynamically-linked ELFs (shared libraries) can run.
+
+endmenu
+
+menu "System calls"
+
+config SYSCALLS
+	bool "Enable system call interface"
+	default y
+
+config LINUX_SYSCALL_ABI
+	bool "Linux-compatible syscall ABI"
+	depends on SYSCALLS
+	default y
+
+config FORK
+	bool "fork syscall (shared-address-space)"
+	depends on USERMODE && KMALLOC
+	default y
+	help
+	  fork creates a child task that resumes after the parent's
+	  syscall with rax = 0. Currently shares the address space
+	  (vfork-like).
+
+endmenu
+
+menu "Memory management"
+
+config KMALLOC
+	bool "Kernel heap allocator"
+	default y
+
+config VM
+	bool "Per-process address spaces (PMM + paging + mmap)"
+	depends on KMALLOC
+	default y
+
+endmenu
+
+menu "Interrupts and timers"
+
+config INTERRUPTS
+	bool "Hardware interrupts"
+	default y
+
+config PIT_TIMER
+	bool "PIT periodic timer"
+	depends on INTERRUPTS
+	default y
+
+endmenu
+
+menu "Process management"
+
+config SCHED
+	bool "Preemptive round-robin scheduler"
+	depends on INTERRUPTS
+	default y
+
+config SCHED_HZ
+	int "Scheduler tick rate"
+	depends on SCHED
+	default 100
+
+config TASK_TSS
+	bool "Per-task TSS kernel stacks"
+	depends on SCHED
+	default y
+
+config PROC_EXIT
+	bool "Per-process exit and wait"
+	depends on SCHED
+	default y
+
+config USERMODE
+	bool "User mode ring 3 support"
+	depends on SCHED
+	default y
+
+endmenu
+
+menu "Kernel debugging"
+
+config PANIC_REBOOT
+	bool "Reboot on panic (otherwise halt)"
+	default n
+	help
+	  If set, a panic issues an 8042 reset; otherwise the kernel halts.
+
+config PANIC_SELFTEST
+	bool "Trigger a panic at boot (testing)"
+	default n
+	help
+	  Call panic() during boot to verify the panic screen.
+
+endmenu
+
+menu "Init options"
+
+config RUN_INIT
+	bool "Run an init program at boot"
+	depends on EXECVE
+	default y
+	help
+	  Automatically execute a program after boot. The format is
+	  auto-detected (ELF or #!script).
+
+config INIT_PATH
+	string "Init program path"
+	depends on RUN_INIT
+	default "/init"
+
+endmenu
+
+menu "Debug output"
+
+config DEBUG_SYSCALL
+	bool "Trace syscalls and exits"
+	default n
+
+config FS_VERBOSE
+	bool "Verbose filesystem messages"
+	default n
+
+endmenu

@@ -1,0 +1,49 @@
+menu "Networking Support"
+
+config NET
+    bool "Enable networking stack"
+    default y
+    help
+      Enable the core networking stack and socket syscalls.
+
+config NET_RTL8139
+    bool "Realtek RTL8139 PCI Ethernet driver"
+    depends on net
+    default y
+    help
+      Driver for the very common Realtek RTL8139 PCI network card.
+      (Use 'pci -nn' in QEMU or your host to verify it's 10ec:8139).
+
+config NET_E1000
+    bool "Intel E1000 PCI Ethernet driver"
+    depends on NET
+    default y
+    help
+      Driver for the Intel PRO/1000 (E1000) Gigabit Ethernet adapter.
+      (Use '-device e1000' in QEMU to emulate this card).
+
+config NET_IPV4_UDP
+    bool "IPv4 and UDP support"
+    depends on net
+    default y
+    help
+      Minimal IPv4 routing and UDP transport layer.
+
+config NET_IP_ADDR
+    depends on net
+    string "Default IP Address"
+    default "0xC0A80164"
+    help
+      The static IP address for the copper kernel.
+
+config NET_SUBNET_MASK
+    depends on net
+    string "Default Subnet Mask"
+    default "0xFFFFFF00"
+
+config NET_GATEWAY
+    depends on net
+    string "Default Gateway"
+    default "0xC0A80101"
+
+endmenu

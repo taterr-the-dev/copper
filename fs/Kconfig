@@ -1,0 +1,47 @@
+menu "Filesystems"
+
+config FS_VFS
+	bool "Virtual filesystem switch"
+	default y
+
+config FS_FAT12
+	bool "FAT12 filesystem (floppy disks)"
+	depends on FS_VFS
+	default y
+
+config FS_FAT16
+	bool "FAT16 filesystem (old USB drives / SD cards)"
+	depends on FS_VFS
+	default y
+
+config FS_FAT32
+	bool "FAT32 filesystem (modern USB drives / SD cards)"
+	depends on FS_VFS
+	default y
+
+config FS_EXT4
+	bool "ext4 filesystem (with indirect block fallback)"
+	depends on FS_VFS
+	default y
+
+config FS_EXT3
+	bool "ext3 filesystem (journal-aware)"
+	depends on FS_VFS
+	default y
+
+config FS_EXT2
+	bool "ext2 filesystem"
+	depends on FS_VFS
+	default y
+
+config FS_PROC
+	bool "procfs virtual filesystem"
+	depends on FS_VFS
+	default y
+
+config FS_TMPFS
+	bool "tmpfs RAM filesystem"
+	depends on FS_VFS
+	default y
+
+endmenu

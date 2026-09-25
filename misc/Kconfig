@@ -1,0 +1,21 @@
+#
+#Miscellaneous Configuration
+#
+
+menu "Miscellaneous options"
+
+config USE_CUSTOM_BOOTLOADER
+    bool "Use custom Copper bootloader (instead of GRUB)"
+    default n
+    help
+      When enabled, 'make test' will build and boot the kernel using
+      the custom Copper bootloader instead of GRUB.
+      Leave disabled to keep using GRUB for testing.
+
+config MISC_VERBOSE_BOOT
+    bool "Verbose boot messages"
+    default n
+    help
+      Print extra information during early boot.
+
+endmenu
