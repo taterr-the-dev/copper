@@ -50,12 +50,29 @@ uint64_t *vm_new_as(void) {
   uint64_t *p4 = (uint64_t *)pmm_alloc();
   uint64_t *p3 = (uint64_t *)pmm_alloc();
   uint64_t *p2 = (uint64_t *)pmm_alloc();
+  
   for (int i = 0; i < 512; i++) {
     p4[i] = 0;
     p3[i] = 0;
+    if (i < 512) {
+      if (i == 0x7F7) {
+        p2[i] = (uint64_t)i * 0x200000 | 0x9B;
+      } else {
+        p2[i] = (uint64_t)i * 0x200000 | 0x83;
+      }
+    }
   }
-  for (int i = 0; i < 512; i++)
-    p2[i] = (uint64_t)i * 0x200000 | 0x83;
+
+  uint64_t *p1 = (uint64_t *)pmm_alloc();
+  for (int i = 0; i < 512; i++) {
+    if (i == 0) {
+      p1[i] = 0; 
+    } else {
+      p1[i] = (uint64_t)i * 0x1000 | 0x07; 
+    }
+  }
+  p2[0] = (uint64_t)p1 | 0x07; 
+
   p3[0] = (uint64_t)p2 | 0x07;
   p4[0] = (uint64_t)p3 | 0x07;
   return p4;

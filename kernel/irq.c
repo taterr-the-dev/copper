@@ -4,6 +4,7 @@
 #include <kernel/panic.h>
 #include <kernel/pmm.h>
 #include <kernel/string.h>
+#include <kernel/timer.h>
 #ifdef CONFIG_SCHED
 #include <kernel/proc.h>
 #include <kernel/vm.h>
@@ -12,6 +13,7 @@
 extern void timer_tick(void);
 extern void keyboard_irq(void);
 extern uint64_t debug_syscall_ret;
+extern void lapic_send_eoi(void);
 
 void hex64(uint64_t v) {
   for (int i = 60; i >= 0; i -= 4) {
@@ -103,7 +105,7 @@ void isr_handler(struct int_frame *f) {
   uint8_t irq = f->int_no - 32;
   if (irq == 0) {
     timer_tick();
-    pic_sendEOI(0);
+    timer_send_eoi();
 #ifdef CONFIG_SCHED
     sched_tick();
 #endif
@@ -115,4 +117,7 @@ void isr_handler(struct int_frame *f) {
     keyboard_irq();
   }
   pic_sendEOI(irq);
+#ifdef CONFIG_LAPIC
+  lapic_send_eoi();
+#endif
 }

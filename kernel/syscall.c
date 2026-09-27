@@ -1030,10 +1030,36 @@ static int64_t sys_munmap(uint64_t a, size_t l) {
   (void)l;
   return 0;
 }
-static int64_t sys_mprotect(uint64_t a, size_t l, int p) {
-  (void)a;
-  (void)l;
-  (void)p;
+static int64_t sys_mprotect(uint64_t addr, size_t len, int prot) {
+  if (!current || !current->cr3) return -EINVAL;
+  if (addr & 0xFFF) return -EINVAL;
+  if (len == 0) return 0;
+  len = (len + 0xFFF) & ~0xFFFULL;
+  if (addr >= 0x0000800000000000ULL || addr + len > 0x0000800000000000ULL) {
+    return -ENOMEM;
+  }
+  uint64_t *p4 = (uint64_t *)current->cr3;
+  uint64_t end = addr + len;
+  for (uint64_t curr = addr; curr < end; curr += 4096) {
+    int i4 = (curr >> 39) & 511;
+    if (!(p4[i4] & 1)) return -ENOMEM;
+    uint64_t *p3 = (uint64_t *)(p4[i4] & 0x000FFFFFFFFFF000ULL);
+    int i3 = (curr >> 30) & 511;
+    if (!(p3[i3] & 1)) return -ENOMEM;
+    if (p3[i3] & 0x80) return -ENOTSUP;
+    uint64_t *p2 = (uint64_t *)(p3[i3] & 0x000FFFFFFFFFF000ULL);
+    int i2 = (curr >> 21) & 511;
+    if (!(p2[i2] & 1)) return -ENOMEM;
+    if (p2[i2] & 0x80) return -ENOTSUP;
+    uint64_t *p1 = (uint64_t *)(p2[i2] & 0x000FFFFFFFFFF000ULL);
+    int i1 = (curr >> 12) & 511;
+    if (!(p1[i1] & 1)) return -ENOMEM;
+    uint64_t flags = 0x05;
+    if (prot & 2) flags |= 0x02;
+    uint64_t pa = p1[i1] & 0x000FFFFFFFFFF000ULL;
+    p1[i1] = pa | flags;
+    __asm__ volatile("invlpg (%0)" ::"r"(curr) : "memory");
+  }
   return 0;
 }
 
@@ -1079,7 +1105,7 @@ static int64_t sys_uname(struct utsname *u) {
     return -EFAULT;
   copy_str(u->sysname, "Copper", 65);
   copy_str(u->nodename, "copper", 65);
-  copy_str(u->release, "0.1.0", 65);
+  copy_str(u->release, "0.2.0-rc1", 65);
   copy_str(u->version, "#1 SMP Copper", 65);
   copy_str(u->machine, "x86_64", 65);
   copy_str(u->domainname, "(none)", 65);
@@ -1786,7 +1812,7 @@ int64_t syscall_dispatch(struct pt_regs *r) {
   case 186:
     return sys_gettid();
   case 218:
-    return 1;
+    return current ? current->pid : 1;
   case 221:
     return 0;
   case 228:

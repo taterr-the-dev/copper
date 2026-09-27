@@ -20,6 +20,7 @@ CFILES := kernel/main.c \
           kernel/gdt.c \
           kernel/idt.c \
           kernel/irq.c \
+          kernel/timer.c \
           kernel/pic.c \
           kernel/pit.c \
           kernel/pmm.c \
@@ -64,6 +65,10 @@ endif
 
 ifeq ($(CONFIG_PCI_RAMDISK),y)
     CFILES += drivers/pci_ramdisk.c
+endif
+
+ifeq ($(CONFIG_LAPIC),y)
+    CFILES += kernel/lapic.c
 endif
 
 ifeq ($(CONFIG_FS_VFS),y)
@@ -155,7 +160,7 @@ test: kernel
 
 run: kernel
 	@echo "[*] Direct boot + real disk"
-	@qemu-system-x86_64 -m 256M -kernel $(BUILD_DIR)/copper.bin $(if $(wildcard fs.img),-hda fs.img,) -serial stdio -no-reboot -no-shutdown -netdev user,id=net0,net=10.0.2.0/24,hostfwd=udp::8080-:8080,hostfwd=tcp::8080-:8080 -device e1000,netdev=net0,mac=52:54:00:12:34:57 -device ivshmem-plain,memdev=ramdisk0 -object memory-backend-ram,id=ramdisk0,size=64M -boot d
+	@qemu-system-x86_64 -m 256M -kernel $(BUILD_DIR)/copper.bin $(if $(wildcard fs.img),-hda fs.img,) -serial stdio -no-reboot -no-shutdown -netdev user,id=net0,net=10.0.2.0/24,hostfwd=udp::8080-:8080,hostfwd=tcp::8090-:8090 -device e1000,netdev=net0,mac=52:54:00:12:34:57 -device ivshmem-plain,memdev=ramdisk0 -object memory-backend-ram,id=ramdisk0,size=64M -boot d
 	
 check_config:
 ifeq ($(wildcard .config),)

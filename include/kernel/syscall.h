@@ -108,6 +108,7 @@
 #define ESOCKTNOSUPPORT 94
 #define EAFNOSUPPORT 97
 #define ECONNREFUSED 111
+#define ENOTSUP 134
 
 struct pt_regs {
     uint64_t rax;

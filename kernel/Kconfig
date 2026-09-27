@@ -96,6 +96,10 @@ config PIT_TIMER
 	depends on INTERRUPTS
 	default y
 
+config LAPIC
+	bool "LAPIC timer"
+	depends on INTERRUPTS
+	default y
 endmenu
 
 menu "Process management"

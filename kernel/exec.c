@@ -12,6 +12,7 @@ extern uint64_t boot_cr3;
 extern void enter_usermode(uint64_t entry, uint64_t sp);
 extern void reset_mm_state(int pid);
 extern void put_u64(uint64_t v);
+extern void hex64(uint64_t v);
 #define EXEC_BUF_SIZE (4 * 1024 * 1024)
 #define EXEC_BUF_VA 0x80000000ULL
 
@@ -190,11 +191,11 @@ int execve(const char *path, char *const *argv, char *const *envp) {
 
   uint64_t saved_cr3;
   __asm__ volatile("mov %%cr3, %0" : "=r"(saved_cr3));
-
   __asm__ volatile("mov %0,%%cr3" ::"r"(boot_cr3) : "memory");
   uint64_t *new_cr3 = vm_new_as();
+  __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
+
   if (!new_cr3) {
-    __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
     return -1;
   }
 
@@ -244,6 +245,22 @@ int execve(const char *path, char *const *argv, char *const *envp) {
     return -1;
   }
 
+  uint64_t main_base = (e->e_type == ET_DYN) ? 0x400000 : 0;
+  uint64_t main_phoff = e->e_phoff;
+  uint16_t main_phnum = e->e_phnum;
+  uint16_t main_phentsize = e->e_phentsize;
+  uint64_t main_entry = e->e_entry;
+  uint8_t main_phdrs_buf[4096];
+  size_t main_phdrs_size = main_phnum * main_phentsize;
+  if (main_phdrs_size > 4096) main_phdrs_size = 4096;
+  memcpy(main_phdrs_buf, exec_buf + main_phoff, main_phdrs_size);
+  Elf64_Phdr *ph_buf = (Elf64_Phdr *)(exec_buf + e->e_phoff);
+  for (int i = 0; i < e->e_phnum; i++) {
+    if (ph_buf[i].p_type == PT_TLS && ph_buf[i].p_align == 0) {
+      ph_buf[i].p_align = 8;
+    }
+  }
+
   uint64_t base = (e->e_type == ET_DYN) ? 0x400000 : 0;
   static char interp_path[256];
   interp_path[0] = 0;
@@ -260,11 +277,17 @@ int execve(const char *path, char *const *argv, char *const *envp) {
     if (vfs_open(interp_path, &if_) == 0 && if_.size <= EXEC_BUF_SIZE) {
       vfs_read(&if_, exec_buf, if_.size);
       vfs_close(&if_);
+      Elf64_Ehdr *ie = (Elf64_Ehdr *)exec_buf;
+      Elf64_Phdr *iph = (Elf64_Phdr *)(exec_buf + ie->e_phoff);
+      for (int i = 0; i < ie->e_phnum; i++) {
+        if (iph[i].p_type == PT_TLS && iph[i].p_align == 0) {
+          iph[i].p_align = 8;
+        }
+      }
       interp_base = 0x7f0000000000ULL;
       interp_entry = load_mem(exec_buf, new_cr3, interp_base, 0, 0);
     }
   }
-
   static uint64_t frames[USTACK_NP];
   for (int i = 0; i < USTACK_NP; i++) {
     frames[i] = pmm_alloc();
@@ -292,23 +315,24 @@ int execve(const char *path, char *const *argv, char *const *envp) {
     int frame_idx = offset_in_stack / 4096;
     uint64_t offset_in_frame = offset_in_stack % 4096;
     uint64_t pg = frames[frame_idx];
-    memset((void *)(pg + offset_in_frame), 0, 16);
-  }
-
-  Elf64_Phdr *ph = (Elf64_Phdr *)(exec_buf + e->e_phoff);
-  uint64_t phdr_vaddr = 0;
-  for (int i = 0; i < e->e_phnum; i++) {
-    if (ph[i].p_type == PT_PHDR) {
-      phdr_vaddr = base + ph[i].p_vaddr;
-      break;
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    uint64_t seed = ((uint64_t)hi << 32) | lo;
+    uint8_t *rand_buf = (uint8_t *)(pg + offset_in_frame);
+    for (int i = 0; i < 16; i++) {
+      seed = seed * 6364136223846793005UL + 1442695040888963407UL;
+      rand_buf[i] = (uint8_t)(seed >> 33);
     }
   }
-  if (phdr_vaddr == 0) {
-    for (int i = 0; i < e->e_phnum; i++) {
-      if (ph[i].p_type == PT_LOAD) {
-        phdr_vaddr = base + ph[i].p_vaddr + e->e_phoff;
-        break;
-      }
+
+  uint64_t phdr_vaddr = main_base + main_phoff;
+
+  if (phdr_vaddr > 0 && phdr_vaddr < 0x1000) {
+    uint64_t phdr_pg = pmm_alloc();
+    if (phdr_pg) {
+      vm_map(new_cr3, 0, phdr_pg, 0x07);
+      memset((void *)phdr_pg, 0, 4096);
+      memcpy((void *)(phdr_pg + phdr_vaddr), main_phdrs_buf, main_phdrs_size);
     }
   }
 
@@ -322,15 +346,28 @@ int execve(const char *path, char *const *argv, char *const *envp) {
   auxv[ai++] = e->e_phnum;
   auxv[ai++] = AT_PAGESZ;
   auxv[ai++] = 4096;
+  auxv[ai++] = AT_CLKTCK;
+  auxv[ai++] = 100;
   auxv[ai++] = AT_BASE;
   auxv[ai++] = interp_base;
   auxv[ai++] = AT_ENTRY;
-  auxv[ai++] = base + e->e_entry;
+  auxv[ai++] = main_base + main_entry;
   auxv[ai++] = AT_RANDOM;
   auxv[ai++] = randp;
+  auxv[ai++] = AT_SECURE;
+  auxv[ai++] = 0;
+  auxv[ai++] = AT_UID;
+  auxv[ai++] = 0;
+  auxv[ai++] = AT_EUID;
+  auxv[ai++] = 0;
+  auxv[ai++] = AT_GID;
+  auxv[ai++] = 0;
+  auxv[ai++] = AT_EGID;
+  auxv[ai++] = 0;
+  auxv[ai++] = AT_SYSINFO_EHDR;
+  auxv[ai++] = 0;
   auxv[ai++] = AT_NULL;
   auxv[ai++] = 0;
-
   uint64_t vecsize = 8 * ((1 + argc + 1 + envc + 1) + (uint64_t)ai);
   uint64_t R = (top - vecsize) & ~0xFULL;
 

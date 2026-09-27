@@ -38,6 +38,8 @@ extern void user_thread(void *);
 #ifdef CONFIG_SYSCALLS
 #include <kernel/syscall.h>
 #endif
+#include <kernel/timer.h>
+
 extern void put_u64(uint64_t v);
 #ifdef CONFIG_RUN_INIT
 static void init_thread(void *arg) {
@@ -70,7 +72,7 @@ static void fpu_enable(void) {
 void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   con_init();
   con_puts("\n=====================================\n");
-  con_puts("  Copper Kernel v0.1 (x86_64)\n");
+  con_puts("  Copper Kernel v0.2-rc1 (x86_64)\n");
   con_puts("=====================================\n");
 
   if (magic == 0x2BADB002)
@@ -156,15 +158,30 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
 #ifdef CONFIG_INTERRUPTS
   pic_remap(32, 40);
   idt_install();
-#ifdef CONFIG_PIT_TIMER
-  pit_init(100);
-#endif
+  timer_init();
 #ifdef CONFIG_PS2_KEYBOARD
   kbd_init();
 #endif
+#ifdef CONFIG_LAPIC
+  pic_set_mask(0);
+#else
   pic_clear_mask(0);
+#endif
   pic_clear_mask(1);
   pic_clear_mask(2);
+  pic_clear_mask(3);
+  pic_clear_mask(4);
+  pic_set_mask(5);
+  pic_set_mask(6);
+  pic_set_mask(7);
+  pic_set_mask(8);
+  pic_set_mask(9);
+  pic_set_mask(10);
+  pic_set_mask(11);
+  pic_set_mask(12);
+  pic_set_mask(13);
+  pic_clear_mask(14);
+  pic_clear_mask(15);
   con_puts("[OK] Interrupts enabled.\n");
   __asm__ volatile("sti");
 #endif
@@ -252,6 +269,7 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
     con_puts("[PCI-RAMDISK] PCI RAM disk ready\n");
   }
 #endif
+
 #ifdef CONFIG_SCHED
   scheduler_init();
   extern void demo_a(void *), demo_b(void *);
