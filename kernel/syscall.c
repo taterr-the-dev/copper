@@ -1133,12 +1133,7 @@ static int64_t sys_getrandom(void *b, size_t n, unsigned f) {
   }
   return n;
 }
-static int64_t sys_sysinfo(void *si) {
-  if (!access_ok(si, 112))
-    return -EFAULT;
-  memset(si, 0, 112);
-  return 0;
-}
+
 static int64_t sys_arch_prctl(int c, uint64_t a) {
   if (c == 0x1002) {
     current->fsbase = a;
@@ -1573,6 +1568,56 @@ static int64_t sys_sigaltstack(const void *ss, void *old_ss) {
   return 0;
 }
 
+static int64_t sys_sysinfo(void *si) {
+  if (!access_ok(si, 112))
+    return -EFAULT;
+  memset(si, 0, 112);
+  return 0;
+}
+
+struct tms {
+  uint64_t tms_utime;
+  uint64_t tms_stime;
+  uint64_t tms_cutime;
+  uint64_t tms_cstime;
+};
+
+static int64_t sys_times(struct tms *buf) {
+  if (buf && access_ok(buf, sizeof(struct tms))) {
+    memset(buf, 0, sizeof(struct tms));
+  }
+  return 0;
+}
+
+struct rusage {
+  uint64_t ru_utime_tv_sec;
+  uint64_t ru_utime_tv_usec;
+  uint64_t ru_stime_tv_sec;
+  uint64_t ru_stime_tv_usec;
+  int64_t ru_maxrss;
+  int64_t ru_ixrss;
+  int64_t ru_idrss;
+  int64_t ru_isrss;
+  int64_t ru_minflt;
+  int64_t ru_majflt;
+  int64_t ru_nswap;
+  int64_t ru_inblock;
+  int64_t ru_oublock;
+  int64_t ru_msgsnd;
+  int64_t ru_msgrcv;
+  int64_t ru_nsignals;
+  int64_t ru_nvcsw;
+  int64_t ru_nivcsw;
+};
+
+static int64_t sys_getrusage(int who, struct rusage *usage) {
+  (void)who;
+  if (usage && access_ok(usage, sizeof(struct rusage))) {
+    memset(usage, 0, sizeof(struct rusage));
+  }
+  return 0;
+}
+
 int64_t syscall_dispatch(struct pt_regs *r) {
 #ifdef CONFIG_DEBUG_SYSCALL
   {
@@ -1780,8 +1825,12 @@ int64_t syscall_dispatch(struct pt_regs *r) {
     return sys_gettimeofday((struct timeval *)r->rdi, (void *)r->rsi);
   case 97:
     return 0;
+  case 98:
+    return sys_getrusage((int)r->rdi, (struct rusage *)r->rsi);
   case 99:
     return sys_sysinfo((void *)r->rdi);
+  case 100:
+    return sys_times((struct tms *)r->rdi);
   case 102:
     return sys_getuid();
   case 104:
