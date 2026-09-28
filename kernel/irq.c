@@ -103,21 +103,28 @@ void isr_handler(struct int_frame *f) {
   }
 
   uint8_t irq = f->int_no - 32;
+
   if (irq == 0) {
     timer_tick();
-    timer_send_eoi();
 #ifdef CONFIG_SCHED
     sched_tick();
 #endif
+#ifdef CONFIG_LAPIC
+    lapic_send_eoi();
+#else
+    timer_send_eoi();
+#endif
     return;
   }
-  if (irq < 16 && irq_handlers[irq]) {
-    irq_handlers[irq]();
-  } else if (irq == 1) {
-    keyboard_irq();
-  }
-  pic_sendEOI(irq);
+  if (irq < 16) {
+    if (irq_handlers[irq]) {
+      irq_handlers[irq]();
+    } else if (irq == 1) {
+      keyboard_irq();
+    }
+    pic_sendEOI(irq);
 #ifdef CONFIG_LAPIC
-  lapic_send_eoi();
+    lapic_send_eoi();
 #endif
+  }
 }
