@@ -110,7 +110,7 @@ void isr_handler(struct int_frame *f) {
     }
 #endif
     panic_frame(f);
-}
+  }
 
   uint8_t irq = f->int_no - 32;
 
