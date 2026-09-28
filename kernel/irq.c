@@ -98,9 +98,19 @@ void isr_handler(struct int_frame *f) {
         return;
       }
     }
+
+    if ((f->cs & 3) == 3) {
+      con_puts("[KILL] User exception #");
+      put_u64(f->int_no);
+      con_puts(" at RIP=");
+      hex64(f->rip);
+      con_puts("\n");
+      kill_current(f->int_no);
+      return;
+    }
 #endif
     panic_frame(f);
-  }
+}
 
   uint8_t irq = f->int_no - 32;
 
