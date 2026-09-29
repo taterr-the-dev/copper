@@ -193,3 +193,18 @@ int ext_readlink(void *sbp, const char *path, char *buf, size_t bufsz) {
     
     return size;
 }
+
+int ext_truncate(struct fs_file *f, uint64_t length) {
+    struct ext_sb *s = f->sb;
+    struct ext_priv *p = (struct ext_priv *)f->priv;
+    if (!p) return -1;
+    uint8_t in[256];
+    ext_read_inode(s, p->ino, in);
+    uint32_t sz = (uint32_t)length;
+    memcpy(in + 4, &sz, 4);
+    uint32_t blocks = (sz + 511) / 512;
+    memcpy(in + 28, &blocks, 4);
+    ext_write_inode(s, p->ino, in);
+    f->size = length;
+    return 0;
+}

@@ -96,72 +96,87 @@ static void bit_set(struct ext_sb *s, uint32_t bmp_blk, uint32_t bit)
 
 uint32_t ext_alloc_block(struct ext_sb *s)
 {
+    uint32_t num_groups = (s->blocks + s->bpg - 1) / s->bpg;
     uint8_t bgd[64];
     uint32_t read_sz = s->desc_size > 64 ? 64 : s->desc_size;
 
-    rb(s, (uint64_t)s->bgdt_block * s->bs, bgd, read_sz);
-    uint32_t bb = bgd[0] | (bgd[1] << 8) | (bgd[2] << 16) | ((uint32_t)bgd[3] << 24);
+    for (uint32_t g = 0; g < num_groups; g++) {
+        rb(s, (uint64_t)s->bgdt_block * s->bs + (uint64_t)g * s->desc_size, bgd, read_sz);
+        uint16_t free_count = bgd[12] | (bgd[13] << 8);
+        if (free_count == 0)
+            continue;
 
-    uint32_t bmp_bytes = (s->bpg + 7) / 8;
-    if (bmp_bytes > 8192)
-        bmp_bytes = 8192;
+        uint32_t bb = bgd[0] | (bgd[1] << 8) | (bgd[2] << 16) | ((uint32_t)bgd[3] << 24);
 
-    uint8_t *buf = kmalloc(bmp_bytes);
-    if (!buf)
-        return 0;
+        uint32_t bmp_bytes = (s->bpg + 7) / 8;
+        if (bmp_bytes > 8192)
+            bmp_bytes = 8192;
 
-    rb(s, (uint64_t)bb * s->bs, buf, bmp_bytes);
-
-    for (uint32_t i = 0; i < s->bpg; i++) {
-        if (!(buf[i / 8] & (1 << (i & 7)))) {
-            buf[i / 8] |= (1 << (i & 7));
-
-            wb(s, (uint64_t)bb * s->bs, buf, bmp_bytes);
-            kfree(buf);
-
-            uint16_t free_count = bgd[12] | (bgd[13] << 8);
-            if (free_count > 0)
+        uint8_t *buf = kmalloc(bmp_bytes);
+        if (!buf)
+            return 0;
+        rb(s, (uint64_t)bb * s->bs, buf, bmp_bytes);
+        for (uint32_t i = 0; i < s->bpg; i++) {
+            if (!(buf[i / 8] & (1 << (i & 7)))) {
+                buf[i / 8] |= (1 << (i & 7));
+                wb(s, (uint64_t)bb * s->bs, buf, bmp_bytes);
+                bcache_invalidate((uint64_t)bb * s->bs);
+                kfree(buf);
                 free_count--;
-            bgd[12] = free_count & 0xFF;
-            bgd[13] = (free_count >> 8) & 0xFF;
-            wb(s, (uint64_t)s->bgdt_block * s->bs, bgd, read_sz);
-
-            return i + 1;
+                bgd[12] = free_count & 0xFF;
+                bgd[13] = (free_count >> 8) & 0xFF;
+                uint64_t bgd_offset = (uint64_t)s->bgdt_block * s->bs + (uint64_t)g * s->desc_size;
+                uint32_t bgd_blk = bgd_offset / s->bs;
+                wb(s, bgd_offset, bgd, read_sz);
+                bcache_invalidate((uint64_t)bgd_blk * s->bs);
+                uint32_t abs_blk = (g * s->bpg) + i;
+                if (abs_blk == 0) continue;
+                return abs_blk;
+            }
         }
+        kfree(buf);
     }
-
-    kfree(buf);
     return 0;
 }
 
 uint32_t ext_alloc_inode(struct ext_sb *s)
 {
+    uint32_t num_groups = (s->inodes + s->ipg - 1) / s->ipg;
     uint8_t bgd[64];
     uint32_t read_sz = s->desc_size > 64 ? 64 : s->desc_size;
-    rb(s, (uint64_t)s->bgdt_block * s->bs, bgd, read_sz);
-    uint32_t ib = bgd[4] | (bgd[5] << 8) | (bgd[6] << 16) | ((uint32_t)bgd[7] << 24);
-    uint32_t bmp_bytes = (s->ipg + 7) / 8;
-    if (bmp_bytes > 8192)
-        bmp_bytes = 8192;
-    uint8_t *buf = kmalloc(bmp_bytes);
-    if (!buf)
-        return 0;
-    rb(s, (uint64_t)ib * s->bs, buf, bmp_bytes);
-    for (uint32_t i = 0; i < s->ipg; i++) {
-        if (!(buf[i / 8] & (1 << (i & 7)))) {
-            buf[i / 8] |= (1 << (i & 7));
-            wb(s, (uint64_t)ib * s->bs, buf, bmp_bytes);
-            kfree(buf);
-            uint16_t free_count = bgd[14] | (bgd[15] << 8);
-            if (free_count > 0)
+
+    for (uint32_t g = 0; g < num_groups; g++) {
+        rb(s, (uint64_t)s->bgdt_block * s->bs + (uint64_t)g * s->desc_size, bgd, read_sz);
+        uint16_t free_count = bgd[14] | (bgd[15] << 8);
+        if (free_count == 0)
+            continue;
+
+        uint32_t ib = bgd[4] | (bgd[5] << 8) | (bgd[6] << 16) | ((uint32_t)bgd[7] << 24);
+        uint32_t bmp_bytes = (s->ipg + 7) / 8;
+        if (bmp_bytes > 8192)
+            bmp_bytes = 8192;
+        uint8_t *buf = kmalloc(bmp_bytes);
+        if (!buf)
+            return 0;
+        rb(s, (uint64_t)ib * s->bs, buf, bmp_bytes);
+        for (uint32_t i = 0; i < s->ipg; i++) {
+            if (!(buf[i / 8] & (1 << (i & 7)))) {
+                buf[i / 8] |= (1 << (i & 7));
+                wb(s, (uint64_t)ib * s->bs, buf, bmp_bytes);
+                bcache_invalidate((uint64_t)ib * s->bs);
+                kfree(buf);
                 free_count--;
-            bgd[14] = free_count & 0xFF;
-            bgd[15] = (free_count >> 8) & 0xFF;
-            wb(s, (uint64_t)s->bgdt_block * s->bs, bgd, read_sz);
-            return i + 1;
+                bgd[14] = free_count & 0xFF;
+                bgd[15] = (free_count >> 8) & 0xFF;
+                uint64_t bgd_offset = (uint64_t)s->bgdt_block * s->bs + (uint64_t)g * s->desc_size;
+                uint32_t bgd_blk = bgd_offset / s->bs;
+                wb(s, bgd_offset, bgd, read_sz);
+                bcache_invalidate((uint64_t)bgd_blk * s->bs);
+                return (g * s->ipg) + i + 1;
+            }
         }
+        kfree(buf);
     }
-    kfree(buf);
     return 0;
 }
 

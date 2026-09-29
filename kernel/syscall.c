@@ -1211,6 +1211,25 @@ static int64_t sys_pread(int fd, void *b, size_t n, int64_t o) {
   f->pos = old;
   return r;
 }
+static int64_t sys_pwrite(int fd, void *b, size_t n, int64_t o) {
+  if (fd < 3 || !fdtable[fd].used)
+    return -EBADF;
+  if (!access_ok(b, n))
+    return -EFAULT;
+  struct fs_file *f = &fdtable[fd].f;
+  size_t old = f->pos;
+  f->pos = o;
+  int64_t r = vfs_write(f, b, n);
+  f->pos = old;
+  return r;
+}
+
+static int64_t sys_ftruncate(int fd, uint64_t length) {
+    if (fd < 3 || fd >= MAXFD || !fdtable[fd].used)
+        return -EBADF;
+    struct fs_file *f = &fdtable[fd].f;
+    return vfs_truncate(f, length);
+}
 static int64_t sys_futex(int *u, int op, int val, int64_t to) {
   (void)to;
   op &= 127;
@@ -1670,6 +1689,8 @@ int64_t syscall_dispatch(struct pt_regs *r) {
     return sys_lseekfd((int)r->rdi, (long)r->rsi, (int)r->rdx);
   case 17:
     return sys_pread((int)r->rdi, (void *)r->rsi, r->rdx, r->r10);
+  case 18:
+    return sys_pwrite((int)r->rdi, (void *)r->rsi, r->rdx, r->r10);
   case 19: {
     int64_t t = 0;
     for (int i = 0; i < (int)r->rdx; i++)
@@ -1691,7 +1712,7 @@ int64_t syscall_dispatch(struct pt_regs *r) {
   case 75:
     return 0;
   case 77:
-    return 0;
+    return sys_ftruncate((int)r->rdi, r->rsi);
   case 83:
     return sys_mkdir((const char *)r->rdi, (uint32_t)r->rsi);
   case 84:

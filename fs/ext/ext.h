@@ -42,6 +42,7 @@ int ext_unlink(void *sbp, const char *path);
 int ext_mkdir(void *sbp, const char *path, uint32_t mode);
 int ext_rmdir(void *sbp, const char *path);
 int ext_readlink(void *sbp, const char *path, char *buf, size_t bufsz);
+int ext_truncate(struct fs_file *f, uint64_t length);
 
 int ext2_mount(struct blkdev *dev, void **sbp);
 int ext3_mount(struct blkdev *dev, void **sbp);

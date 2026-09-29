@@ -33,5 +33,6 @@ struct fs_ops ext4_fs = {.name = "ext4",
                          .unlink = ext_unlink,
                          .mkdir = ext_mkdir,
                          .rmdir = ext_rmdir,
-    					 .readlink = ext_readlink
+    					 .readlink = ext_readlink,
+    					     .truncate = ext_truncate
                          };

@@ -293,6 +293,17 @@ int64_t vfs_write(struct fs_file *f, const void *in, size_t len) {
   return ret;
 }
 
+int vfs_truncate(struct fs_file *f, uint64_t length) {
+    if (!f || !f->ops)
+        return -EPERM;
+
+    if (f->ops->truncate) {
+        return f->ops->truncate(f, length);
+    }
+    f->size = length;
+    return 0;
+}
+
 int vfs_readdir(const char *p, int i, struct fs_dirent *d) {
   if (istmp(p))
     return tmp_fs.readdir(0, p, i, d);

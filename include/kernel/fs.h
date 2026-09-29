@@ -41,6 +41,7 @@ struct fs_ops {
     int (*mkdir)(void *sb, const char *path, uint32_t mode);
     int (*rmdir)(void *sb, const char *path);
     int (*readlink)(void *sb, const char *path, char *buf, size_t bufsz);
+    int (*truncate)(struct fs_file *f, uint64_t length);
 };
 
 struct mount_point {
@@ -61,6 +62,7 @@ const char *vfs_name(void);
 int vfs_open(const char *path, struct fs_file *f);
 int64_t vfs_read(struct fs_file *f, void *buf, size_t len);
 int64_t vfs_write(struct fs_file *f, const void *buf, size_t len);
+int vfs_truncate(struct fs_file *f, uint64_t length);
 int vfs_create(const char *path);
 int vfs_readdir(const char *path, int idx, struct fs_dirent *out);
 int vfs_close(struct fs_file *f);
