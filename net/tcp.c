@@ -23,6 +23,9 @@ struct tcp_pcb {
 };
 #define MAX_TCP 8
 static struct tcp_pcb tcps[MAX_TCP];
+static uint16_t ephemeral_port = 49152;
+static uint32_t tcp_seq_base = 0x12345678;
+
 
 static uint16_t swap16(uint16_t v) { return (v >> 8) | (v << 8); }
 static uint32_t swap32(uint32_t v) {
@@ -256,7 +259,9 @@ int tcp_connect(uint32_t dst_ip, uint16_t dst_port) {
   pcb->used = 1;
   pcb->state = 2;
   pcb->local_ip = my_ip;
-  pcb->local_port = 49152 + new_idx;
+  pcb->local_port = ephemeral_port++;
+  if (ephemeral_port < 49152) ephemeral_port = 49152;
+  pcb->seq = tcp_seq_base++;
   pcb->remote_ip = dst_ip;
   pcb->remote_port = dst_port;
   pcb->seq = 5000 + new_idx;
@@ -335,6 +340,13 @@ int tcp_write(int pcb_idx, void *buf, int len) {
 
 void tcp_close(int pcb_idx) {
   if (pcb_idx >= 0 && pcb_idx < MAX_TCP) {
+    if (tcps[pcb_idx].state == 3) {
+      uint16_t win = sizeof(tcps[pcb_idx].rx_buf) - tcps[pcb_idx].rx_len;
+      send_tcp(tcps[pcb_idx].remote_ip, tcps[pcb_idx].local_port,
+               tcps[pcb_idx].remote_port, tcps[pcb_idx].seq, tcps[pcb_idx].ack,
+               0x11, NULL, 0, win, NULL, 0);
+      tcps[pcb_idx].seq++;
+    }
     tcps[pcb_idx].used = 0;
     tcps[pcb_idx].state = 0;
   }

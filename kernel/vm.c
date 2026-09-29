@@ -14,7 +14,6 @@ extern void put_u64(uint64_t v);
 uint64_t boot_cr3 = 0;
 void vm_init(void) {
   __asm__ volatile("mov %%cr3,%0" : "=r"(boot_cr3));
-  pmm_init();
 }
 void vm_map(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl) {
   int i4 = (va >> 39) & 511, i3 = (va >> 30) & 511, i2 = (va >> 21) & 511,

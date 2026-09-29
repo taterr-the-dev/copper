@@ -72,7 +72,7 @@ static void fpu_enable(void) {
 void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   con_init();
   con_puts("\n=====================================\n");
-  con_puts("  Copper Kernel v0.2-rc1 (x86_64)\n");
+  con_puts("  Copper Kernel v0.2-rc2 (x86_64)\n");
   con_puts("=====================================\n");
 
   if (magic == 0x2BADB002)
@@ -88,10 +88,12 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   kmalloc_init();
 #ifdef CONFIG_VM
   vm_init();
+  pmm_init();
+  mb_init((uint64_t)(uint32_t)mboot_ptr);
   {
     extern char _kernel_end[];
     uint64_t kend = ((uint64_t)_kernel_end + 0x100000) & ~0xFFFULL;
-    pmm_reserve(0x400000, kend);
+    pmm_reserve(0x100000, kend);
     con_puts("[OK] pmm: kernel reserved up to ");
     {
       const char *hx = "0123456789abcdef";
@@ -105,7 +107,6 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
 #endif
 #endif
 #ifdef CONFIG_FS_VFS
-  mb_init((uint64_t)(uint32_t)mboot_ptr);
   fs_init();
   ata_init();
   for (int i = 0; i < blkdev_count(); i++)
