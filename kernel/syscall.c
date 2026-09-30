@@ -133,40 +133,60 @@ static inline char *cwd_of(void) {
   return cwd_table[p];
 }
 
-static void resolve_path(const char *p, char *out, size_t out_size) {
+void resolve_path(const char *p, char *out, size_t out_size) {
   if (!access_ok(p, 1)) {
     out[0] = 0;
     return;
   }
-  size_t p_len = safe_strnlen(p, out_size);
-  if (p_len >= out_size) {
-    out[0] = 0;
-    return;
-  }
+
+  static char temp[512];
+  int t_len = 0;
 
   if (p[0] == '/') {
-    copy_str(out, p, out_size);
-    return;
+    temp[0] = '\0';
+  } else {
+    char *cwd = cwd_of();
+    size_t cwd_len = strlen(cwd);
+    if (cwd_len >= sizeof(temp) - 1) {
+      out[0] = 0;
+      return;
+    }
+    memcpy(temp, cwd, cwd_len);
+    t_len = cwd_len;
   }
 
-  char *cwd = cwd_of();
-  size_t cwd_len = strlen(cwd);
+  const char *ptr = p;
+  while (*ptr) {
+    if (*ptr == '/') { ptr++; continue; }
+    const char *start = ptr;
+    while (*ptr && *ptr != '/') ptr++;
+    size_t len = ptr - start;
+    if (len == 1 && start[0] == '.') {
+      continue;
+    } else if (len == 2 && start[0] == '.' && start[1] == '.') {
+      if (t_len > 1) {
+        t_len--;
+        while (t_len > 0 && temp[t_len - 1] != '/') t_len--;
+      }
+    } else {
+      if (t_len == 0 || temp[t_len - 1] != '/') {
+        if (t_len < sizeof(temp) - 1) temp[t_len++] = '/';
+      }
+      for (size_t i = 0; i < len && t_len < sizeof(temp) - 1; i++) {
+        temp[t_len++] = start[i];
+      }
+      temp[t_len] = '\0';
+    }
+  }
 
-  if (cwd_len == 1 && cwd[0] == '/') {
-    if (1 + p_len >= out_size) {
-      out[0] = 0;
-      return;
-    }
+  if (t_len == 0) {
     out[0] = '/';
-    memcpy(out + 1, p, p_len + 1);
+    out[1] = '\0';
   } else {
-    if (cwd_len + 1 + p_len >= out_size) {
-      out[0] = 0;
-      return;
-    }
-    memcpy(out, cwd, cwd_len);
-    out[cwd_len] = '/';
-    memcpy(out + cwd_len + 1, p, p_len + 1);
+    size_t copy_len = t_len;
+    if (copy_len >= out_size) copy_len = out_size - 1;
+    memcpy(out, temp, copy_len);
+    out[copy_len] = '\0';
   }
 }
 

@@ -7,6 +7,7 @@
 #include <kernel/proc.h>
 #include <kernel/string.h>
 #include <kernel/vm.h>
+#include <kernel/syscall.h>
 
 extern uint64_t boot_cr3;
 extern void enter_usermode(uint64_t entry, uint64_t sp);
@@ -140,10 +141,14 @@ static uint64_t copy_str_to_user(uint64_t *frames, int num_frames,
 }
 
 int execve(const char *path, char *const *argv, char *const *envp) {
+  static char resolved_path[256];
   static char k_path[256];
+
+  resolve_path(path, resolved_path, sizeof(resolved_path));
+
   int i = 0;
-  while (i < 255 && path[i]) {
-    k_path[i] = path[i];
+  while (i < 255 && resolved_path[i]) {
+    k_path[i] = resolved_path[i];
     i++;
   }
   k_path[i] = 0;
@@ -165,8 +170,8 @@ int execve(const char *path, char *const *argv, char *const *envp) {
   } else {
     argc = 1;
     int j = 0;
-    while (j < 255 && path[j]) {
-      k_argv_strs[0][j] = path[j];
+    while (j < 255 && resolved_path[j]) {
+      k_argv_strs[0][j] = resolved_path[j];
       j++;
     }
     k_argv_strs[0][j] = 0;
@@ -204,7 +209,7 @@ int execve(const char *path, char *const *argv, char *const *envp) {
 
   if (open_res < 0) {
     __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
-    return -1;
+    return -ENOENT;
   }
   if (f.size > EXEC_BUF_SIZE) {
     vfs_close(&f);

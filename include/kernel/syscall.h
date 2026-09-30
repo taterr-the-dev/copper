@@ -182,5 +182,6 @@ void syscall_init(void);
 int64_t syscall_dispatch(struct pt_regs *regs);
 void syscall_selftest(void);
 void setup_std_fds(int pid);
+void resolve_path(const char *p, char *out, size_t out_size);
 
 #endif
