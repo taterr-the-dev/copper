@@ -12,6 +12,7 @@ extern uint64_t saved_rsp;
 #include <kernel/pmm.h>
 #include <kernel/vm.h>
 #endif
+#include <kernel/acpi.h>
 #ifdef CONFIG_TTY
 #include <kernel/tty.h>
 struct tty *console_tty = NULL;
@@ -1752,6 +1753,12 @@ static int64_t sys_renameat2(int olddfd, const char *oldpath, int newdfd, const 
     return sys_rename(oldpath, newpath);
 }
 
+static int64_t sys_reboot(int magic1, int magic2, int cmd, void *arg) {
+    (void)magic1; (void)magic2; (void)cmd; (void)arg;
+    acpi_shutdown();
+    return -EFAULT;
+}
+
 int64_t syscall_dispatch(struct pt_regs *r) {
 #ifdef CONFIG_DEBUG_SYSCALL
   {
@@ -2000,6 +2007,8 @@ int64_t syscall_dispatch(struct pt_regs *r) {
                      (const char *)r->rdx);
   case 166:
     return sys_umount((const char *)r->rdi);
+  case 169:
+    return sys_reboot((int)r->rdi, (int)r->rsi, (int)r->rdx, (void *)r->r10);
   case 186:
     return sys_gettid();
   case 218:

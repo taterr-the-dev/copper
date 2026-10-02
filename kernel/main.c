@@ -40,6 +40,7 @@ extern void user_thread(void *);
 #endif
 #include <kernel/timer.h>
 #include <kernel/arch.h>
+#include <kernel/acpi.h>
 
 extern void put_u64(uint64_t v);
 #ifdef CONFIG_RUN_INIT
@@ -58,7 +59,7 @@ extern int pci_ramdisk_init(void);
 void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   con_init();
   con_puts("\n=====================================\n");
-  con_puts("  Copper Kernel v0.2-rc2 (x86_64)\n");
+  con_puts("  Copper Kernel v0.2-rc2\n");
   con_puts("=====================================\n");
 
   if (magic == 0x2BADB002)
@@ -256,7 +257,7 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
     con_puts("[PCI-RAMDISK] PCI RAM disk ready\n");
   }
 #endif
-
+	acpi_init();
 #ifdef CONFIG_SCHED
   scheduler_init();
   extern void demo_a(void *), demo_b(void *);
