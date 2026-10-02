@@ -3,6 +3,8 @@
 #include <kernel/interrupts.h>
 #include <kernel/io.h>
 #include <kernel/panic.h>
+#include <kernel/arch.h>
+
 static const char *hx = "0123456789abcdef";
 static void p2(uint8_t v) {
   con_putc(hx[v >> 4]);
@@ -42,12 +44,12 @@ static void halt_or_reboot(void) {
 #ifdef CONFIG_PANIC_REBOOT
   outb(0x64, 0xFE);
 #endif
-  __asm__ volatile("cli");
+	arch_cli();
   for (;;)
-    __asm__ volatile("hlt");
+	arch_hlt();
 }
 void panic(const char *msg) {
-  __asm__ volatile("cli");
+	arch_cli();
   con_puts("\n\n");
   con_puts("========================================\n");
   con_puts("***          KERNEL PANIC          ***\n");
@@ -57,7 +59,7 @@ void panic(const char *msg) {
   halt_or_reboot();
 }
 void panic_frame(struct int_frame *f) {
-  __asm__ volatile("cli");
+	arch_cli();
   con_puts("\n\n");
   con_puts("========================================\n");
   con_puts("*** KERNEL PANIC: ");
@@ -93,9 +95,8 @@ void panic_frame(struct int_frame *f) {
   con_puts(" RDI=");
   ph(f->rdi);
   con_puts("\n");
-  uint64_t cr2, cr3;
-  __asm__ volatile("mov %%cr2,%0" : "=r"(cr2));
-  __asm__ volatile("mov %%cr3,%0" : "=r"(cr3));
+	uint64_t cr2 = arch_read_cr2();
+	uint64_t cr3 = arch_read_cr3();
   con_puts("CR2=");
   ph(cr2);
   con_puts("  CR3=");

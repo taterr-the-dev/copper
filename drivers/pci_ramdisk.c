@@ -5,6 +5,7 @@
 #include <kernel/vm.h>
 #include <kernel/types.h>
 #include <kernel/string.h>
+#include <kernel/arch.h>
 
 extern void put_u64(uint64_t v);
 extern void hex64(uint64_t v);
@@ -38,13 +39,9 @@ int pci_ramdisk_init(void) {
             if (vendor == 0x1af4 && device == 0x1110) {
                 con_puts("[PCI-RAMDISK] Found ivshmem device at ");
                 put_u64(bus); con_puts(":"); put_u64(slot); con_puts("\n");
-                
                 uint32_t bar2 = pci_config_read32(bus, slot, 0, 0x18);
                 ramdisk.mmio_phys = bar2 & ~0xF;
-                
-                uint64_t cr3;
-                __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
-                
+								uint64_t cr3 = arch_read_cr3();
                 for (int i = 0; i < 16384; i++) {
                     vm_map((uint64_t *)cr3, 
                            0xFFFF800000000000ULL + i * 4096,

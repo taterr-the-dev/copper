@@ -3,6 +3,7 @@
 #include <kernel/kmalloc.h>
 #include <kernel/string.h>
 #include <kernel/types.h>
+#include <kernel/arch.h>
 
 #ifdef CONFIG_NET
 extern void netif_tx(uint8_t *pkt, int len);
@@ -210,12 +211,11 @@ void tcp_input(uint8_t *tcp, int len, uint32_t src_ip, uint32_t dst_ip) {
           int space = sizeof(pcb->rx_buf) - pcb->rx_len;
           int copy = payload_len < space ? payload_len : space;
           if (copy > 0) {
-              uint64_t rflags;
-              __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags));
+							uint64_t rflags = arch_save_flags();
               memcpy(pcb->rx_buf + pcb->rx_len, payload, copy);
               pcb->rx_len += copy;
               pcb->ack += copy;
-              __asm__ volatile("pushq %0; popfq" :: "r"(rflags));
+							arch_restore_flags(rflags);
           }
       } else {
       }
@@ -314,16 +314,12 @@ int tcp_read(int pcb_idx, void *buf, int len) {
     return 0;
   }
 
-  uint64_t rflags;
-  __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags));
-  
+	uint64_t rflags = arch_save_flags();
   int copy = tcps[pcb_idx].rx_len < len ? tcps[pcb_idx].rx_len : len;
   memcpy(buf, tcps[pcb_idx].rx_buf, copy);
   memmove(tcps[pcb_idx].rx_buf, tcps[pcb_idx].rx_buf + copy, tcps[pcb_idx].rx_len - copy);
   tcps[pcb_idx].rx_len -= copy;
-  
-  __asm__ volatile("pushq %0; popfq" :: "r"(rflags));
-  
+	arch_restore_flags(rflags);
   return copy;
 }
 

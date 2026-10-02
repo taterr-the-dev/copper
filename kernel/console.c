@@ -1,5 +1,6 @@
 #include <autoconf.h>
 #include <kernel/console.h>
+#include <kernel/arch.h>
 #ifdef CONFIG_SERIAL_UART
 #include <drivers/serial.h>
 #endif
@@ -8,12 +9,12 @@
 #endif
 
 static inline uint64_t irq_save(void) {
-  uint64_t f;
-  __asm__ volatile("pushfq; pop %0; cli" : "=r"(f));
+	uint64_t f = arch_save_flags();
+	arch_cli();
   return f;
 }
 static inline void irq_restore(uint64_t f) {
-  __asm__ volatile("push %0; popfq" ::"r"(f) : "memory", "cc");
+	arch_restore_flags(f);
 }
 
 void con_init(void) {

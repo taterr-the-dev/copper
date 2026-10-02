@@ -4,6 +4,7 @@
 #include <kernel/string.h>
 #include <kernel/syscall.h>
 #include <kernel/tty.h>
+#include <kernel/arch.h>
 
 extern void yield(void);
 static void copy_str(char *d, const char *s, size_t n) {
@@ -105,23 +106,23 @@ int tty_read(struct tty *tty, char *buf, size_t len) {
       }
 
       if (!has_newline) {
-        __asm__ volatile("cli");
+				arch_cli();
         tty->read_waiter = current;
         current->state = T_BLOCKED;
         schedule();
         tty->read_waiter = NULL;
-        __asm__ volatile("sti");
+				arch_sti();
         continue;
       }
     }
 
     if (tty->read_count == 0) {
-      __asm__ volatile("cli");
+			arch_cli();
       tty->read_waiter = current;
       current->state = T_BLOCKED;
       schedule();
       tty->read_waiter = NULL;
-      __asm__ volatile("sti");
+      arch_sti();
       continue;
     }
 

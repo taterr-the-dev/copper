@@ -39,6 +39,7 @@ extern void user_thread(void *);
 #include <kernel/syscall.h>
 #endif
 #include <kernel/timer.h>
+#include <kernel/arch.h>
 
 extern void put_u64(uint64_t v);
 #ifdef CONFIG_RUN_INIT
@@ -46,28 +47,13 @@ static void init_thread(void *arg) {
   (void)arg;
   int rc = execve(CONFIG_INIT_PATH, 0, 0);
   for (;;)
-    __asm__ volatile("hlt");
+    arch_hlt();
 }
 #endif
 
 #ifdef CONFIG_PCI_RAMDISK
 extern int pci_ramdisk_init(void);
 #endif
-
-static void fpu_enable(void) {
-  uint64_t cr0;
-  __asm__ volatile("mov %%cr0,%0" : "=r"(cr0));
-  cr0 &= ~(1ULL << 2);
-  cr0 |= (1ULL << 1);
-  __asm__ volatile("mov %0,%%cr0" ::"r"(cr0));
-  uint64_t cr4;
-  __asm__ volatile("mov %%cr4,%0" : "=r"(cr4));
-  cr4 |= (1ULL << 9) | (1ULL << 10);
-  __asm__ volatile("mov %0,%%cr4" ::"r"(cr4));
-  __asm__ volatile("fninit");
-  uint32_t mxcsr = 0x1f80;
-  __asm__ volatile("ldmxcsr %0" ::"m"(mxcsr));
-}
 
 void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   con_init();
@@ -81,7 +67,7 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
     con_puts("[!!] Invalid Multiboot magic!\n");
 
   gdt_init();
-  fpu_enable();
+  arch_init_fpu();
   con_puts("[OK] GDT initialized.\n");
   idt_init();
 #ifdef CONFIG_KMALLOC
@@ -184,7 +170,7 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   pic_clear_mask(14);
   pic_clear_mask(15);
   con_puts("[OK] Interrupts enabled.\n");
-  __asm__ volatile("sti");
+  arch_sti();
 #endif
 
 #ifdef CONFIG_KMALLOC
@@ -286,7 +272,7 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
 #endif
 #endif
   for (;;)
-    __asm__ volatile("hlt");
+    arch_hlt();
 }
 
 #ifdef CONFIG_SCHED

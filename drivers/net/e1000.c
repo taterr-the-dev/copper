@@ -6,6 +6,7 @@
 #include <kernel/string.h>
 #include <kernel/types.h>
 #include <kernel/vm.h>
+#include <kernel/arch.h>
 
 #ifdef CONFIG_NET_E1000
 
@@ -97,10 +98,7 @@ void e1000_init() {
     for (int slot = 0; slot < 32; slot++) {
       if (pci_config_read32(bus, slot, 0, 0) == 0x100E8086) {
         uint32_t mmio_phys = pci_config_read32(bus, slot, 0, 0x10) & ~0xF;
-
-        uint64_t cr3;
-        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
-
+        uint64_t cr3 = arch_read_cr3();
         for (int p = 0; p < 32; p++) {
           vm_map((uint64_t *)cr3, mmio_phys + p * 0x1000,
                  mmio_phys + p * 0x1000, 0x03);
@@ -212,8 +210,7 @@ void e1000_tx(uint8_t *pkt, int len) {
   if (!e1000_active)
     return;
 
-  uint64_t cr3;
-  __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+  uint64_t cr3 = arch_read_cr3();
   uint32_t mmio_phys = (uint32_t)(uint64_t)mmio_base;
   for (int p = 0; p < 32; p++) {
     extern void vm_map(uint64_t *cr3, uint64_t virt, uint64_t phys,
