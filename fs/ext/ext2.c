@@ -30,5 +30,6 @@ struct fs_ops ext2_fs = {
   .mkdir = ext_mkdir,
   .rmdir = ext_rmdir,
   .readlink = ext_readlink,
-  .truncate = ext_truncate
+  .truncate = ext_truncate,
+  .rename = ext_rename
 };

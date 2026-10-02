@@ -28,6 +28,7 @@ int ext_read_at(struct ext_sb *s, uint64_t offset, void *out, size_t len);
 int ext_write_at(struct ext_sb *s, uint64_t offset, const void *in, size_t len);
 uint32_t ext_alloc_block(struct ext_sb *s);
 uint32_t ext_alloc_inode(struct ext_sb *s);
+void ext_free_inode(struct ext_sb *s, uint32_t ino);
 uint32_t ext_get_iblock(struct ext_sb *s, uint8_t *in, uint32_t b, int alloc);
 uint32_t ext_resolve(struct ext_sb *s, const char *path);
 uint32_t ext_resolve_with_symlinks(struct ext_sb *s, const char *path, int depth);
@@ -43,6 +44,7 @@ int ext_mkdir(void *sbp, const char *path, uint32_t mode);
 int ext_rmdir(void *sbp, const char *path);
 int ext_readlink(void *sbp, const char *path, char *buf, size_t bufsz);
 int ext_truncate(struct fs_file *f, uint64_t length);
+int ext_rename(void *sbp, const char *oldpath, const char *newpath);
 
 int ext2_mount(struct blkdev *dev, void **sbp);
 int ext3_mount(struct blkdev *dev, void **sbp);

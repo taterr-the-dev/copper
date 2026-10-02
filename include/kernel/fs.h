@@ -42,6 +42,7 @@ struct fs_ops {
     int (*rmdir)(void *sb, const char *path);
     int (*readlink)(void *sb, const char *path, char *buf, size_t bufsz);
     int (*truncate)(struct fs_file *f, uint64_t length);
+    int (*rename)(void *sb, const char *oldpath, const char *newpath);
 };
 
 struct mount_point {
@@ -73,4 +74,6 @@ int vfs_readlink(const char *path, char *buf, size_t bufsz);
 
 int vfs_check_perm(struct fs_file *f, int access_mode);
 
+struct mount_point *find_mount(const char *path);
+const char *get_relative_path(const char *path, struct mount_point *mp);
 #endif

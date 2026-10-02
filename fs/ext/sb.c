@@ -180,6 +180,27 @@ uint32_t ext_alloc_inode(struct ext_sb *s)
     return 0;
 }
 
+void ext_free_inode(struct ext_sb *s, uint32_t ino) {
+    uint32_t g = (ino - 1) / s->ipg, idx = (ino - 1) % s->ipg;
+    uint8_t bgd[64];
+    uint32_t read_sz = s->desc_size > 64 ? 64 : s->desc_size;
+    rb(s, (uint64_t)s->bgdt_block * s->bs + (uint64_t)g * s->desc_size, bgd, read_sz);
+    uint32_t ib = bgd[4] | (bgd[5] << 8) | (bgd[6] << 16) | ((uint32_t)bgd[7] << 24);
+    uint32_t bmp_bytes = (s->ipg + 7) / 8;
+    if (bmp_bytes > 8192) bmp_bytes = 8192;
+    uint8_t *buf = kmalloc(bmp_bytes);
+    if (!buf) return;
+    rb(s, (uint64_t)ib * s->bs, buf, bmp_bytes);
+    buf[idx / 8] &= ~(1 << (idx & 7));
+    wb(s, (uint64_t)ib * s->bs, buf, bmp_bytes);
+    kfree(buf);
+    uint16_t free_count = bgd[14] | (bgd[15] << 8);
+    free_count++;
+    bgd[14] = free_count & 0xFF;
+    bgd[15] = (free_count >> 8) & 0xFF;
+    wb(s, (uint64_t)s->bgdt_block * s->bs + (uint64_t)g * s->desc_size, bgd, read_sz);
+}
+
 int ext_init_sb(struct blkdev *dev, void **sbp)
 {
     uint8_t sb[1024];

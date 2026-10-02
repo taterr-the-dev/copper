@@ -85,7 +85,7 @@ void fs_init(void) {
 #endif
 }
 
-static struct mount_point *find_mount(const char *path) {
+struct mount_point *find_mount(const char *path) {
   struct mount_point *best = NULL;
   int best_len = 0;
 
@@ -107,7 +107,7 @@ static struct mount_point *find_mount(const char *path) {
   return best;
 }
 
-static const char *get_relative_path(const char *path, struct mount_point *mp) {
+const char *get_relative_path(const char *path, struct mount_point *mp) {
   int mlen = strlen(mp->path);
   if (mlen == 1)
     return path;

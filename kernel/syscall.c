@@ -140,7 +140,7 @@ void resolve_path(const char *p, char *out, size_t out_size) {
   }
 
   static char temp[512];
-  int t_len = 0;
+  size_t t_len = 0;
 
   if (p[0] == '/') {
     temp[0] = '\0';
@@ -1045,10 +1045,45 @@ static int64_t sys_pipe(int pipefd[2]) {
   return 0;
 }
 
-static int64_t sys_munmap(uint64_t a, size_t l) {
-  (void)a;
-  (void)l;
-  return 0;
+static int64_t sys_munmap(uint64_t addr, size_t length) {
+    if (addr & 0xFFF) return -EINVAL;
+    if (length == 0) return -EINVAL;
+    length = (length + 0xFFF) & ~0xFFF;
+
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    cr3 &= ~0xFFF;
+
+    for (uint64_t a = addr; a < addr + length; a += 0x1000) {
+        uint64_t *p4 = (uint64_t *)(uint64_t)cr3;
+        int i4 = (a >> 39) & 511;
+        if (!(p4[i4] & 1)) continue;
+
+        uint64_t *p3 = (uint64_t *)(p4[i4] & 0x000FFFFFFFFFF000ULL);
+        int i3 = (a >> 30) & 511;
+        if (!(p3[i3] & 1)) continue;
+        if (p3[i3] & 0x80) continue;
+
+        uint64_t *p2 = (uint64_t *)(p3[i3] & 0x000FFFFFFFFFF000ULL);
+        int i2 = (a >> 21) & 511;
+        if (!(p2[i2] & 1)) continue;
+
+        if (p2[i2] & 0x80) {
+            p2[i2] = 0;
+            __asm__ volatile("invlpg (%0)" ::"r"(a) : "memory");
+            continue;
+        }
+        uint64_t *p1 = (uint64_t *)(p2[i2] & 0x000FFFFFFFFFF000ULL);
+        int i1 = (a >> 12) & 511;
+        uint64_t pte = p1[i1];
+        if (pte & 1) {
+            uint64_t phys = pte & 0x000FFFFFFFFFF000ULL;
+            p1[i1] = 0;
+            __asm__ volatile("invlpg (%0)" ::"r"(a) : "memory");
+            pmm_free(phys);
+        }
+    }
+    return 0;
 }
 static int64_t sys_mprotect(uint64_t addr, size_t len, int prot) {
   if (!current || !current->cr3) return -EINVAL;
@@ -1657,6 +1692,66 @@ static int64_t sys_getrusage(int who, struct rusage *usage) {
   return 0;
 }
 
+static int64_t sys_rename(const char *oldpath, const char *newpath) {
+    if (!oldpath || !newpath) return -EFAULT;
+
+    char old_res[256], new_res[256];
+    resolve_path(oldpath, old_res, sizeof(old_res));
+    resolve_path(newpath, new_res, sizeof(new_res));
+
+    struct mount_point *mp = find_mount(old_res);
+    struct mount_point *mp_new = find_mount(new_res);
+    if (!mp || !mp_new) return -ENOENT;
+    if (mp != mp_new) goto fallback_copy_delete;
+
+    const char *rel_old = get_relative_path(old_res, mp);
+    const char *rel_new = get_relative_path(new_res, mp);
+
+    if (mp->ops->rename) {
+        int ret = mp->ops->rename(mp->sb, rel_old, rel_new);
+        if (ret == 0) return 0;
+        if (ret != -EXDEV && ret != -ENOSYS) return ret;
+    }
+
+fallback_copy_delete:
+    struct fs_file f_old, f_new;
+    if (vfs_open(old_res, &f_old) != 0) return -ENOENT;
+    
+    if (f_old.mode & 0040000) {
+        vfs_close(&f_old);
+        return -EISDIR;
+    }
+
+    vfs_unlink(new_res);
+    if (vfs_create(new_res) != 0) { vfs_close(&f_old); return -EACCES; }
+    if (vfs_open(new_res, &f_new) != 0) { vfs_close(&f_old); return -EACCES; }
+
+    uint8_t buf[4096];
+    int64_t bytes_read;
+    while ((bytes_read = vfs_read(&f_old, buf, sizeof(buf))) > 0) {
+        vfs_write(&f_new, buf, bytes_read);
+    }
+
+    vfs_close(&f_old);
+    vfs_close(&f_new);
+    vfs_unlink(old_res);
+
+    return 0;
+}
+
+static int64_t sys_renameat(int olddfd, const char *oldpath, int newdfd, const char *newpath) {
+    (void)olddfd;
+    (void)newdfd;
+    return sys_rename(oldpath, newpath);
+}
+
+static int64_t sys_renameat2(int olddfd, const char *oldpath, int newdfd, const char *newpath, unsigned int flags) {
+    (void)olddfd;
+    (void)newdfd;
+    (void)flags;
+    return sys_rename(oldpath, newpath);
+}
+
 int64_t syscall_dispatch(struct pt_regs *r) {
 #ifdef CONFIG_DEBUG_SYSCALL
   {
@@ -1860,6 +1955,12 @@ int64_t syscall_dispatch(struct pt_regs *r) {
     return sys_getcwd((char *)r->rdi, r->rsi);
   case 80:
     return sys_chdir((const char *)r->rdi);
+  case 82:
+    return sys_rename((const char *)r->rdi, (const char *)r->rsi);
+  case 264:
+    return sys_renameat((int)r->rdi, (const char *)r->rsi, (int)r->rdx, (const char *)r->r10);
+  case 316:
+    return sys_renameat2((int)r->rdi, (const char *)r->rsi, (int)r->rdx, (const char *)r->r10, (unsigned int)r->r8);
   case 89:
     return sys_readlink((const char *)r->rdi, (char *)r->rsi, r->rdx);
   case 96:

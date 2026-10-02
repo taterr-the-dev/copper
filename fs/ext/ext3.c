@@ -17,17 +17,19 @@ int ext3_mount(struct blkdev *dev, void **sbp)
     return ext_init_sb(dev, sbp);
 }
 
-struct fs_ops ext3_fs = {.name = "ext3",
-                         .mount = ext3_mount,
-                         .open = ext_open,
-                         .close = ext_close,
-                         .read = ext_read,
-                         .write = ext_write,
-                         .create = ext_create,
-                         .readdir = ext_readdir,
-                         .unlink = ext_unlink,
-                         .mkdir = ext_mkdir,
-                         .rmdir = ext_rmdir,
-    					 .readlink = ext_readlink,
-    					.truncate = ext_truncate
-                         };
+struct fs_ops ext3_fs = {
+	.name = "ext3",
+	.mount = ext3_mount,
+	.open = ext_open,
+	.close = ext_close,
+	.read = ext_read,
+	.write = ext_write,
+	.create = ext_create,
+	.readdir = ext_readdir,
+	.unlink = ext_unlink,
+	.mkdir = ext_mkdir,
+	.rmdir = ext_rmdir,
+	.readlink = ext_readlink,
+	.truncate = ext_truncate,
+  .rename = ext_rename
+};

@@ -339,6 +339,7 @@ int ext_create(void *sbp, const char *path)
         eh->eh_depth = 0;
         eh->eh_generation = 0;
     }
+    ext_write_inode(s, ino, in);
     return add_dirent(s, dir, last, ino, 1);
 }
 
@@ -455,6 +456,135 @@ static void free_inode_blocks(struct ext_sb *s, uint8_t *in)
         free_indirect(s, ind, 3);
 }
 
+static int find_dirent(struct ext_sb *s, uint32_t dir_ino, const char *name,
+                       uint32_t *out_blk, uint32_t *out_io, uint8_t **out_entry, uint8_t *bb) {
+    uint8_t in[256];
+    ext_read_inode(s, dir_ino, in);
+    uint32_t size; memcpy(&size, in + 4, 4);
+    uint32_t off = 0;
+    while (off < size) {
+        uint32_t blk = ext_get_iblock(s, in, off / s->bs, 0);
+        if (!blk) { off += s->bs; continue; }
+        ext_read_blk(s, blk, bb);
+        uint32_t io = off % s->bs;
+        while (io < s->bs) {
+            uint8_t *e = bb + io;
+            uint32_t ei = e[0] | (e[1] << 8) | (e[2] << 16) | ((uint32_t)e[3] << 24);
+            uint16_t rec = e[4] | (e[5] << 8);
+            uint8_t nl = e[6];
+            if (ei && nl == strlen(name)) {
+                char nm[256]; memcpy(nm, e + 8, nl); nm[nl] = 0;
+                if (strcasecmp(nm, name) == 0) {
+                    *out_blk = blk; *out_io = io; *out_entry = e;
+                    return 0;
+                }
+            }
+            if (!rec) break;
+            io += rec;
+        }
+        off += s->bs;
+    }
+    return -ENOENT;
+}
+
+int ext_rename(void *sbp, const char *oldpath, const char *newpath) {
+    struct ext_sb *s = sbp;
+
+    const char *old_last = strrchr(oldpath, '/');
+    char old_parent[256], old_name[256];
+    if (!old_last) { strcpy(old_parent, "."); strcpy(old_name, oldpath); }
+    else {
+        size_t plen = old_last - oldpath;
+        if (plen == 0) strcpy(old_parent, "/");
+        else { memcpy(old_parent, oldpath, plen); old_parent[plen] = 0; }
+        strcpy(old_name, old_last + 1);
+    }
+
+    const char *new_last = strrchr(newpath, '/');
+    char new_parent[256], new_name[256];
+    if (!new_last) { strcpy(new_parent, "."); strcpy(new_name, newpath); }
+    else {
+        size_t plen = new_last - newpath;
+        if (plen == 0) strcpy(new_parent, "/");
+        else { memcpy(new_parent, newpath, plen); new_parent[plen] = 0; }
+        strcpy(new_name, new_last + 1);
+    }
+
+    uint32_t old_p_ino = ext_resolve(s, old_parent);
+    uint32_t new_p_ino = ext_resolve(s, new_parent);
+    if (!old_p_ino || !new_p_ino) return -ENOENT;
+
+    if (old_p_ino != new_p_ino) return -EXDEV;
+
+    uint32_t dir_ino = old_p_ino;
+    if (strcmp(old_name, new_name) == 0) return 0;
+
+    uint8_t bb[8192];
+    uint32_t old_blk, old_io;
+    uint8_t *old_e;
+    if (find_dirent(s, dir_ino, old_name, &old_blk, &old_io, &old_e, bb) != 0) {
+        return -ENOENT;
+    }
+
+    uint8_t old_type = old_e[7];
+    if (old_type == 2) return -EISDIR;
+
+    uint32_t new_blk, new_io;
+    uint8_t *new_e;
+    if (find_dirent(s, dir_ino, new_name, &new_blk, &new_io, &new_e, bb) == 0) {
+        if (new_e[7] == 2) return -EISDIR;
+        new_e[0] = new_e[1] = new_e[2] = new_e[3] = 0;
+        ext_write_blk(s, new_blk, bb);
+    }
+
+    uint8_t new_nl = strlen(new_name);
+    uint16_t new_rec_len = (8 + new_nl + 3) & ~3;
+    uint16_t old_rec_len = old_e[4] | (old_e[5] << 8);
+
+    if (new_rec_len <= old_rec_len) {
+        if (new_rec_len < old_rec_len) {
+            uint8_t *next_e = old_e + new_rec_len;
+            uint16_t next_rec_len = old_rec_len - new_rec_len;
+            next_e[0] = next_e[1] = next_e[2] = next_e[3] = 0;
+            next_e[4] = next_rec_len & 0xff;
+            next_e[5] = (next_rec_len >> 8) & 0xff;
+            next_e[6] = 0; next_e[7] = 0;
+            old_e[4] = new_rec_len & 0xff;
+            old_e[5] = (new_rec_len >> 8) & 0xff;
+        }
+        old_e[6] = new_nl;
+        old_e[7] = old_type;
+        memcpy(old_e + 8, new_name, new_nl);
+        ext_write_blk(s, old_blk, bb);
+        return 0;
+    } else {
+        uint8_t *next_e = old_e + old_rec_len;
+        uint32_t next_ino = next_e[0] | (next_e[1] << 8) | (next_e[2] << 16) | ((uint32_t)next_e[3] << 24);
+        if (next_ino == 0) {
+            uint16_t next_rec_len = next_e[4] | (next_e[5] << 8);
+            if (old_rec_len + next_rec_len >= new_rec_len) {
+                uint16_t combined_rec = old_rec_len + next_rec_len;
+                if (combined_rec > new_rec_len) {
+                    uint8_t *rem_e = old_e + new_rec_len;
+                    uint16_t rem_rec = combined_rec - new_rec_len;
+                    rem_e[0] = rem_e[1] = rem_e[2] = rem_e[3] = 0;
+                    rem_e[4] = rem_rec & 0xff;
+                    rem_e[5] = (rem_rec >> 8) & 0xff;
+                    rem_e[6] = 0; rem_e[7] = 0;
+                }
+                old_e[4] = new_rec_len & 0xff;
+                old_e[5] = (new_rec_len >> 8) & 0xff;
+                old_e[6] = new_nl;
+                old_e[7] = old_type;
+                memcpy(old_e + 8, new_name, new_nl);
+                ext_write_blk(s, old_blk, bb);
+                return 0;
+            }
+        }
+        return -EXDEV;
+    }
+}
+
 int ext_unlink(void *sbp, const char *path)
 {
     struct ext_sb *s = sbp;
@@ -524,6 +654,7 @@ int ext_unlink(void *sbp, const char *path)
     free_inode_blocks(s, target_in);
     memset(target_in, 0, s->inode_size);
     ext_write_inode(s, target_ino, target_in);
+    ext_free_inode(s, target_ino);
     return 0;
 }
 

@@ -22,17 +22,19 @@ int ext4_mount(struct blkdev *dev, void **sbp)
     return ext_init_sb(dev, sbp);
 }
 
-struct fs_ops ext4_fs = {.name = "ext4",
-                         .mount = ext4_mount,
-                         .open = ext_open,
-                         .close = ext_close,
-                         .read = ext_read,
-                         .write = ext_write,
-                         .create = ext_create,
-                         .readdir = ext_readdir,
-                         .unlink = ext_unlink,
-                         .mkdir = ext_mkdir,
-                         .rmdir = ext_rmdir,
-    					 .readlink = ext_readlink,
-    					     .truncate = ext_truncate
-                         };
+struct fs_ops ext4_fs = {
+	.name = "ext4",
+	.mount = ext4_mount,
+	.open = ext_open,
+	.close = ext_close,
+	.read = ext_read,
+	.write = ext_write,
+	.create = ext_create,
+	.readdir = ext_readdir,
+	.unlink = ext_unlink,
+	.mkdir = ext_mkdir,
+	.rmdir = ext_rmdir,
+	.readlink = ext_readlink,
+	.truncate = ext_truncate,
+  .rename = ext_rename
+};
