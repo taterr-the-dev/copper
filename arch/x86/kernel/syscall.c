@@ -13,6 +13,8 @@ extern uint64_t saved_rsp;
 #include <kernel/vm.h>
 #endif
 #include <kernel/acpi.h>
+#include <kernel/fd.h>
+struct fdent fdtables[64][MAXFD];
 #ifdef CONFIG_TTY
 #include <kernel/tty.h>
 struct tty *console_tty = NULL;
@@ -30,6 +32,16 @@ int console_tty_write(struct tty *t, const char *b, size_t l) {
 #define O_WRONLY 00000001
 #define O_RDWR 00000002
 #define O_APPEND 00002000
+#define O_CLOEXEC  02000000
+#define O_NONBLOCK 0x800
+#define FD_CLOEXEC 1
+#define F_DUPFD         0
+#define F_GETFD         1
+#define F_SETFD         2
+#define F_GETFL         3
+#define F_SETFL         4
+#define F_DUPFD_CLOEXEC 1030
+
 #ifdef CONFIG_NET
 extern int64_t sys_setsockopt(int, int, int, const void *, int);
 extern int64_t sys_socket(int, int, int);
@@ -191,15 +203,6 @@ void resolve_path(const char *p, char *out, size_t out_size) {
   }
 }
 
-#define MAXFD 64
-struct fdent {
-  int used;
-  struct fs_file f;
-  char path[128];
-  int dir_idx;
-  int flags;
-};
-static struct fdent fdtables[64][MAXFD];
 struct fdent *fdtable_of(void) {
   int p = current ? current->pid : 0;
   if (p < 0 || p >= 64)
@@ -385,11 +388,17 @@ static int64_t sys_readfd(int fd, void *b, size_t n) {
     struct pipe_buf *pb = fdtable[fd].f.priv;
     if (!pb)
       return 0;
-    while (pb->count == 0) {
-      if (pb->write_closed) {
+    
+    if (pb->count == 0) {
+      if (pb->write_closed)
         return 0;
+      if (fdtable[fd].flags & O_NONBLOCK)
+        return -EAGAIN;
+      while (pb->count == 0) {
+        if (pb->write_closed)
+          return 0;
+        yield();
       }
-      yield();
     }
 
     size_t to_read = n;
@@ -428,6 +437,26 @@ static int64_t sys_writefd(int fd, const char *b, size_t n) {
     struct pipe_buf *pb = fdtable[fd].f.priv;
     if (!pb)
       return -EPIPE;
+    
+    if (fdtable[fd].flags & O_NONBLOCK) {
+      if (pb->count == 4096)
+        return -EAGAIN;
+      size_t space = 4096 - pb->count;
+      size_t to_write = n;
+      if (to_write > space)
+        to_write = space;
+      if (to_write == 0)
+        return -EAGAIN;
+      
+      const char *src = b;
+      for (size_t i = 0; i < to_write; i++) {
+        pb->data[pb->write_pos] = src[i];
+        pb->write_pos = (pb->write_pos + 1) % 4096;
+      }
+      pb->count += to_write;
+      return to_write;
+    }
+    
     size_t written = 0;
     while (written < n) {
       while (pb->count == 4096) {
@@ -495,7 +524,7 @@ void cleanup_process_fds(int pid) {
   }
 }
 
-static int64_t sys_closefd(int fd) {
+int64_t sys_closefd(int fd) {
   if (fd < 3)
     return 0;
   if (!fdtable[fd].used)
@@ -629,19 +658,34 @@ static int64_t sys_fcntl(int fd, int cmd, uint64_t arg) {
   if (fd < 0 || fd >= MAXFD || !fdtable[fd].used)
     return -EBADF;
 
-  if (cmd == 0)
+  switch (cmd) {
+  case F_DUPFD:
     return sys_dupfd(fd);
-  if (cmd == 1)
+  case F_DUPFD_CLOEXEC: {
+    int newfd = sys_dupfd(fd);
+    if (newfd >= 0) {
+      fdtable[newfd].flags |= O_CLOEXEC;
+    }
+    return newfd;
+  }
+  case F_GETFD:
+    return (fdtable[fd].flags & O_CLOEXEC) ? FD_CLOEXEC : 0;
+  case F_SETFD:
+    if (arg & FD_CLOEXEC)
+      fdtable[fd].flags |= O_CLOEXEC;
+    else
+      fdtable[fd].flags &= ~O_CLOEXEC;
     return 0;
-  if (cmd == 2)
-    return 0;
-  if (cmd == 3)
-    return fdtable[fd].flags;
-  if (cmd == 4) {
-    fdtable[fd].flags = arg;
+  case F_GETFL:
+    return fdtable[fd].flags & ~(O_CLOEXEC);
+  case F_SETFL: {
+    uint64_t allowed = O_NONBLOCK | O_APPEND;
+    fdtable[fd].flags = (fdtable[fd].flags & ~allowed) | (arg & allowed);
     return 0;
   }
-  return 0;
+  default:
+    return -EINVAL;
+  }
 }
 
 static int64_t sys_mount(const char *source, const char *target,
@@ -1033,10 +1077,12 @@ static int64_t sys_pipe(int pipefd[2]) {
     kfree(pb);
     return -EMFILE;
   }
+  memset(&fdtable[rfd], 0, sizeof(struct fdent));
   fdtable[rfd].used = 1;
   fdtable[rfd].f.priv = pb;
   fdtable[rfd].f.mode = 0020666;
   copy_str(fdtable[rfd].path, "/pipe/read", 128);
+  memset(&fdtable[wfd], 0, sizeof(struct fdent));
   fdtable[wfd].used = 1;
   fdtable[wfd].f.priv = pb;
   fdtable[wfd].f.mode = 0020666;

@@ -8,6 +8,7 @@
 #include <kernel/string.h>
 #include <kernel/vm.h>
 #include <kernel/syscall.h>
+#include <kernel/fd.h>
 
 extern uint64_t boot_cr3;
 extern void enter_usermode(uint64_t entry, uint64_t sp);
@@ -140,7 +141,17 @@ static uint64_t copy_str_to_user(uint64_t *frames, int num_frames,
   return user_addr;
 }
 
+void close_cloexec_fds(int pid) {
+  if (pid < 0 || pid >= 64) return;
+  for (int i = 3; i < MAXFD; i++) {
+    if (fdtables[pid][i].used && (fdtables[pid][i].flags & O_CLOEXEC)) {
+      sys_closefd(i);
+    }
+  }
+}
+
 int execve(const char *path, char *const *argv, char *const *envp) {
+	close_cloexec_fds(current->pid);
   static char resolved_path[256];
   static char k_path[256];
 
