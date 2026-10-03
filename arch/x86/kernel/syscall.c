@@ -1025,8 +1025,28 @@ static int64_t sys_mmap(uint64_t a, size_t len, int p, int f, int fd,
     vmas[vma_idx].file_offset = o;
     vmas[vma_idx].prot = p;
 
+    struct fs_file *mf = &fdtable[fd].f;
+    uint64_t flags = 0x05;
+    if (p & 0x2) flags |= 0x02;
+
     for (size_t off = 0; off < len; off += 4096) {
-      vm_map((uint64_t *)current->cr3, va + off, 0, 0x06);
+      uint64_t pg = pmm_alloc();
+      if (!pg) break;
+      memset((void *)pg, 0, 4096);
+
+      uint64_t file_off = o + off;
+      if (file_off < mf->size) {
+        size_t old_pos = mf->pos;
+        mf->pos = file_off;
+        size_t to_read = 4096;
+        if (file_off + to_read > mf->size)
+          to_read = mf->size - file_off;
+        if (to_read > 0)
+          vfs_read(mf, (void *)pg, to_read);
+        mf->pos = old_pos;
+      }
+
+      vm_map((uint64_t *)current->cr3, va + off, pg, flags);
     }
 
     user_mmap_base[pid] += len;

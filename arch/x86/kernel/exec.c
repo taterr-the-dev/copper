@@ -380,8 +380,34 @@ int execve(const char *path, char *const *argv, char *const *envp) {
   auxv[ai++] = 0;
   auxv[ai++] = AT_EGID;
   auxv[ai++] = 0;
-  auxv[ai++] = AT_SYSINFO_EHDR;
+  auxv[ai++] = AT_FLAGS;
   auxv[ai++] = 0;
+  auxv[ai++] = AT_HWCAP;
+  auxv[ai++] = 0x1FF;
+  auxv[ai++] = AT_HWCAP2;
+  auxv[ai++] = 0;
+  top -= 8;
+  uint64_t platform_addr = top;
+  {
+    uint64_t offset_in_stack = platform_addr - USTACK_VA;
+    int frame_idx = offset_in_stack / 4096;
+    uint64_t offset_in_frame = offset_in_stack % 4096;
+    uint64_t pg = frames[frame_idx];
+    memcpy((void *)(pg + offset_in_frame), "x86_64", 7);
+  }
+  auxv[ai++] = AT_PLATFORM;
+  auxv[ai++] = platform_addr;
+  top -= strlen(k_path) + 1;
+  uint64_t execfn_addr = top;
+  {
+    uint64_t offset_in_stack = execfn_addr - USTACK_VA;
+    int frame_idx = offset_in_stack / 4096;
+    uint64_t offset_in_frame = offset_in_stack % 4096;
+    uint64_t pg = frames[frame_idx];
+    memcpy((void *)(pg + offset_in_frame), k_path, strlen(k_path) + 1);
+  }
+  auxv[ai++] = AT_EXECFN;
+  auxv[ai++] = execfn_addr;
   auxv[ai++] = AT_NULL;
   auxv[ai++] = 0;
   uint64_t vecsize = 8 * ((1 + argc + 1 + envc + 1) + (uint64_t)ai);

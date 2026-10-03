@@ -55,9 +55,9 @@ uint64_t *vm_new_as(void) {
     p3[i] = 0;
     if (i < 512) {
       if (i == 0x7F7) {
-        p2[i] = (uint64_t)i * 0x200000 | 0x9B;
+        p2[i] = (uint64_t)i * 0x200000 | 0x9F;
       } else {
-        p2[i] = (uint64_t)i * 0x200000 | 0x83;
+        p2[i] = (uint64_t)i * 0x200000 | 0x87;
       }
     }
   }

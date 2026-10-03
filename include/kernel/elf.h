@@ -125,7 +125,7 @@ typedef struct {
     uint16_t e_shentsize;
     uint16_t e_shnum;
     uint16_t e_shstrndx;
-} Elf64_Ehdr;
+} __attribute__((packed)) Elf64_Ehdr;
 
 typedef struct {
     uint32_t p_type;
@@ -136,7 +136,7 @@ typedef struct {
     uint64_t p_filesz;
     uint64_t p_memsz;
     uint64_t p_align;
-} Elf64_Phdr;
+} __attribute__((packed)) Elf64_Phdr;
 
 typedef struct {
     int64_t d_tag;
@@ -144,7 +144,7 @@ typedef struct {
         uint64_t d_val;
         uint64_t d_ptr;
     } d_un;
-} Elf64_Dyn;
+} __attribute__((packed)) Elf64_Dyn;
 
 typedef struct {
     uint32_t st_name;
@@ -153,13 +153,13 @@ typedef struct {
     uint16_t st_shndx;
     uint64_t st_value;
     uint64_t st_size;
-} Elf64_Sym;
+} __attribute__((packed)) Elf64_Sym;
 
 typedef struct {
     uint64_t r_offset;
     uint64_t r_info;
     int64_t r_addend;
-} Elf64_Rela;
+} __attribute__((packed)) Elf64_Rela;
 
 #define R_X86_64_NONE 0
 #define R_X86_64_64 1
