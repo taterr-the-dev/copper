@@ -1250,7 +1250,7 @@ static int64_t sys_uname(struct utsname *u) {
     return -EFAULT;
   copy_str(u->sysname, "Copper", 65);
   copy_str(u->nodename, "copper", 65);
-  copy_str(u->release, "0.2.0-rc2", 65);
+  copy_str(u->release, "0.2.0-rc3", 65);
   copy_str(u->version, "#1 SMP Copper", 65);
   copy_str(u->machine, "x86_64", 65);
   copy_str(u->domainname, "(none)", 65);

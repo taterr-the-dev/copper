@@ -59,7 +59,7 @@ extern int pci_ramdisk_init(void);
 void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   con_init();
   con_puts("\n=====================================\n");
-  con_puts("  Copper Kernel v0.2-rc2\n");
+  con_puts("  Copper Kernel v0.2-rc3\n");
   con_puts("=====================================\n");
 
   if (magic == 0x2BADB002)
