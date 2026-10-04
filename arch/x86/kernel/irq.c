@@ -9,6 +9,7 @@
 #include <kernel/proc.h>
 #include <kernel/vm.h>
 #endif
+#include <kernel/acpi.h>
 
 extern void timer_tick(void);
 extern void keyboard_irq(void);
@@ -132,11 +133,15 @@ void isr_handler(struct int_frame *f) {
     } else if (irq == 1) {
       keyboard_irq();
     }
+    if (acpi.initialized && irq == acpi.sci_interrupt) {
+        acpi_sci_handler();
+    }
     pic_sendEOI(irq);
 #ifdef CONFIG_LAPIC
     lapic_send_eoi();
 #endif
   }
+
 #ifdef CONFIG_SCHED
   if ((f->cs & 3) == 3 && current) {
     deliver_signals(f);

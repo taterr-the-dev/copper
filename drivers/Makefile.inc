@@ -1,3 +1,4 @@
+CFILES += drivers/acpi_cpu.c
 ifeq ($(CONFIG_SERIAL_UART),y)
     CFILES += drivers/serial.c
 endif

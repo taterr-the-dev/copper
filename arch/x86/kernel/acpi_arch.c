@@ -54,6 +54,18 @@ void arch_acpi_pm_write_gas(struct acpi_generic_address *gas, uint16_t val) {
     }
 }
 
+uint32_t arch_acpi_pm_read_gas(struct acpi_generic_address *gas) {
+    if (gas->address == 0) return 0;
+
+    if (gas->address_space_id == 1) {
+        return inw((uint32_t)gas->address);
+    } else {
+        void *mapped = arch_acpi_map_phys(gas->address & ~0xFFF, 4096);
+        volatile uint16_t *reg = (volatile uint16_t *)((uint8_t *)mapped + (gas->address & 0xFFF));
+        return *reg;
+    }
+}
+
 void arch_acpi_shutdown_qemu(uint16_t val) {
     outw(0x604, val);
     outw(0xB004, val);

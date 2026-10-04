@@ -2,9 +2,9 @@
 #include <kernel/console.h>
 #include <kernel/string.h>
 #include <kernel/arch.h>
+#include <kernel/interrupts.h>
 
 extern void put_u64(uint64_t v);
-
 struct acpi_info acpi;
 
 static struct acpi_sdt_header *sdt_entries[64];
@@ -72,6 +72,34 @@ static void acpi_parse_fadt(struct acpi_sdt_header *hdr) {
         acpi.pm1b_cnt.register_bit_width = 16;
         acpi.pm1b_cnt.address = fadt->pm1b_control_blk;
     }
+    if (hdr->revision >= 2 && hdr->length >= 140) {
+        uint8_t *fadt_bytes = (uint8_t *)fadt;
+        struct acpi_generic_address *x_pm1a_evt = (struct acpi_generic_address *)(fadt_bytes + 112);
+        acpi.pm1a_evt = *x_pm1a_evt;
+    } else {
+        acpi.pm1a_evt.address_space_id = 1;
+        acpi.pm1a_evt.register_bit_width = 32;
+        acpi.pm1a_evt.address = fadt->pm1a_event_blk;
+    }
+}
+
+void acpi_sci_handler(void) {
+    if (!acpi.initialized || acpi.pm1a_evt.address == 0) return;
+    uint32_t sts = arch_acpi_pm_read_gas(&acpi.pm1a_evt);
+    if (sts & 0x100) {
+        arch_acpi_pm_write_gas(&acpi.pm1a_evt, 0x100);
+        con_puts("\n[ACPI] Power button pressed! Shutting down cleanly...\n");
+        acpi_shutdown();
+    }
+}
+
+void acpi_enable_power_button(void) {
+    if (!acpi.initialized || acpi.pm1a_evt.address == 0) return;
+    struct acpi_generic_address en_reg = acpi.pm1a_evt;
+    en_reg.address += 2;
+    arch_acpi_pm_write_gas(&en_reg, 0x100);
+    pic_clear_mask(acpi.sci_interrupt);
+    con_puts("[ACPI] Power button event enabled.");
 }
 
 void acpi_init(void) {
@@ -121,13 +149,13 @@ void acpi_init(void) {
         if (sig[0] == 'F' && sig[1] == 'A' && sig[2] == 'C' && sig[3] == 'P')
             acpi_parse_fadt(sdt_entries[i]);
     }
-
     con_puts("[ACPI] ");
     put_u64(acpi.cpu_count);
     con_puts(" CPU(s), ");
     put_u64(acpi.ioapic_count);
     con_puts(" I/O APIC(s)\n");
     acpi.initialized = 1;
+		acpi_enable_power_button();
 }
 
 struct acpi_sdt_header *acpi_find_table(const char *signature) {

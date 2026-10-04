@@ -41,6 +41,7 @@ extern void user_thread(void *);
 #include <kernel/timer.h>
 #include <kernel/arch.h>
 #include <kernel/acpi.h>
+#include <kernel/acpi_bus.h>
 
 extern void put_u64(uint64_t v);
 #ifdef CONFIG_RUN_INIT
@@ -258,6 +259,7 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   }
 #endif
 	acpi_init();
+	acpi_bus_init();
 #ifdef CONFIG_SCHED
   scheduler_init();
   extern void demo_a(void *), demo_b(void *);

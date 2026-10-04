@@ -124,6 +124,7 @@ struct acpi_info {
     uint32_t ioapic_gsi_bases[ACPI_MAX_IOAPICS];
     struct acpi_generic_address pm1a_cnt;
     struct acpi_generic_address pm1b_cnt;
+    struct acpi_generic_address pm1a_evt;
     uint32_t dsdt_address;
     uint16_t sci_interrupt;
     int initialized;
@@ -133,6 +134,9 @@ extern struct acpi_info acpi;
 extern struct acpi_rsdp *arch_acpi_get_rsdp(void);
 extern void *arch_acpi_map_phys(uint64_t phys_addr, size_t size);
 extern void arch_acpi_pm_write_gas(struct acpi_generic_address *gas, uint16_t val);
+uint32_t arch_acpi_pm_read_gas(struct acpi_generic_address *gas);
+void acpi_sci_handler(void);
+void arch_acpi_unmask_sci(uint32_t irq);
 extern void arch_acpi_shutdown_qemu(uint16_t val);
 
 void acpi_init(void);
