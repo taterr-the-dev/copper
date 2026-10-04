@@ -2,6 +2,7 @@
 #include <kernel/interrupts.h>
 #include <kernel/io.h>
 #include <kernel/tty.h>
+#include <kernel/proc.h>
 
 static const char map[128] = {
     0,    27,   '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-',  '=',
@@ -28,27 +29,37 @@ static const char map_shift[128] = {
 static char buf[256];
 static volatile int h = 0, t = 0;
 static int shift_pressed = 0;
+static int ctrl_pressed = 0;
 
 void kbd_init(void) { h = t = 0; }
 
 void keyboard_irq(void) {
   uint8_t sc = inb(0x60);
   outb(0x20, 0x20);
+
   if (sc & 0x80) {
     sc &= 0x7F;
-    if (sc == 0x2A || sc == 0x36)
-      shift_pressed = 0;
+    if (sc == 0x2A || sc == 0x36) shift_pressed = 0;
+    if (sc == 0x1D) ctrl_pressed = 0;
     return;
   }
-  if (sc == 0x2A || sc == 0x36) {
-    shift_pressed = 1;
-    return;
-  }
+
+  if (sc == 0x2A || sc == 0x36) { shift_pressed = 1; return; }
+  if (sc == 0x1D) { ctrl_pressed = 1; return; }
+
   char c = shift_pressed ? map_shift[sc] : map[sc];
-  if (c == 0)
+  if (c == 0) return;
+  if (c == '\r') c = '\n';
+
+  if (ctrl_pressed && (c == 'c' || c == 'C')) {
+    extern void send_signal(int pid, int sig);
+    if (current && current->pid > 0) {
+      send_signal(current->pid, 2);
+    }
+    con_puts("^C\n");
+    ctrl_pressed = 0;
     return;
-  if (c == '\r')
-    c = '\n';
+  }
 
   extern struct tty *console_tty;
   if (console_tty) {
@@ -67,7 +78,6 @@ int kbd_read(char *dst, int n) {
 }
 
 char kbd_getchar(void) {
-  if (h == t)
-    return 0;
+  if (h == t) return 0;
   return buf[h++ & 255];
 }

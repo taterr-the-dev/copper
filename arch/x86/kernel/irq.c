@@ -137,4 +137,9 @@ void isr_handler(struct int_frame *f) {
     lapic_send_eoi();
 #endif
   }
+#ifdef CONFIG_SCHED
+  if ((f->cs & 3) == 3 && current) {
+    deliver_signals(f);
+  }
+#endif
 }

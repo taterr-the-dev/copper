@@ -1,4 +1,5 @@
 #include <autoconf.h>
+#include <kernel/interrupts.h>
 #ifdef CONFIG_SCHED
 #include <kernel/proc.h>
 extern uint64_t current_kstack;
@@ -11,6 +12,7 @@ extern uint64_t current_kstack;
 #include <kernel/vm.h>
 #endif
 extern void put_u64(uint64_t v);
+extern void hex64(uint64_t v);
 extern uint8_t stack_top[];
 extern void context_switch(struct task *, struct task *);
 struct task *current = 0;
@@ -123,10 +125,11 @@ void kthread_exit(void) {
 
 void do_exit(int code) {
   __asm__ volatile("cli");
-
   current->exit_code = (code & 0xff) << 8;
   current->state = T_DEAD;
+
   if (current->parent) {
+    current->parent->sig_pending |= (1ULL << SIGCHLD);
     if (current->parent->state == T_BLOCKED) {
       current->parent->state = T_READY;
     }
@@ -217,4 +220,60 @@ void kill_current(int sig) {
   schedule();
   for (;;)
     __asm__ volatile("hlt");
+}
+void send_signal(int pid, int sig) {
+  struct task *t = current ? current->next : NULL;
+  if (!t) return;
+  struct task *start = t;
+  do {
+    if ((int)t->pid == pid) {
+      t->sig_pending |= (1ULL << sig);
+      if (t->state == T_BLOCKED) {
+        t->state = T_READY;
+      }
+      return;
+    }
+    t = t->next;
+  } while (t != start);
+}
+
+void deliver_signals(struct int_frame *f) {
+  if (!current || !current->sig_pending) return;
+  if ((f->cs & 3) != 3) return;
+
+  for (int sig = 1; sig < 64; sig++) {
+    if (!(current->sig_pending & (1ULL << sig))) continue;
+    if (current->sig_mask & (1ULL << sig)) continue;
+
+    current->sig_pending &= ~(1ULL << sig);
+    uint64_t handler = current->sig_handlers[sig];
+
+    if (handler == SIG_IGN) continue;
+
+    if (handler == SIG_DFL || handler == 0) {
+      switch (sig) {
+        case SIGCHLD:
+        case SIGURG:
+        case SIGWINCH:
+          continue;
+        case SIGSTOP:
+        case SIGTSTP:
+          current->state = T_BLOCKED;
+          yield();
+          continue;
+        case SIGCONT:
+          if (current->state == T_BLOCKED)
+            current->state = T_READY;
+          continue;
+        default:
+          current->exit_code = 128 + sig;
+          current->state = T_DEAD;
+          if (current->parent && current->parent->state == T_BLOCKED)
+            current->parent->state = T_READY;
+          schedule();
+          return;
+      }
+    }
+    continue;
+  }
 }

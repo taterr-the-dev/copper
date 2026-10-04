@@ -15,6 +15,7 @@ extern uint64_t saved_rsp;
 #include <kernel/acpi.h>
 #include <kernel/fd.h>
 struct fdent fdtables[64][MAXFD];
+extern volatile uint64_t timer_ticks;
 #ifdef CONFIG_TTY
 #include <kernel/tty.h>
 struct tty *console_tty = NULL;
@@ -378,9 +379,15 @@ static int64_t sys_readfd(int fd, void *b, size_t n) {
     return -EBADF;
   if (!access_ok(b, n))
     return -EFAULT;
+  if (current && current->sig_pending) {
+    return -EINTR;
+  }
 #ifdef CONFIG_TTY
   if (fdtable[fd].f.tty) {
     int ret = tty_read((struct tty *)fdtable[fd].f.tty, (char *)b, n);
+    if (ret == 0 && current && current->sig_pending) {
+      return -EINTR;
+    }
     return ret;
   }
 #endif
@@ -1202,9 +1209,25 @@ static int64_t sys_clock_gettime(int c, struct timespec *ts) {
   }
   return 0;
 }
-static int64_t sys_nanosleep(const struct timespec *r, struct timespec *o) {
-  (void)r;
-  (void)o;
+
+static int64_t sys_nanosleep(const struct timespec *req, struct timespec *rem) {
+  if (!req || !access_ok(req, sizeof(struct timespec))) {
+    return -EFAULT;
+  }
+  uint64_t ns = req->tv_sec * 1000000000ULL + req->tv_nsec;
+  uint64_t ticks = (ns + 9999999) / 10000000;
+  if (ticks == 0) ticks = 1;
+  current->sleep_until = timer_ticks + ticks;
+  current->state = T_BLOCKED;
+  yield();
+  if (rem && access_ok(rem, sizeof(struct timespec))) {
+    if (current->sleep_until > timer_ticks) {
+      uint64_t remaining_ms = current->sleep_until - timer_ticks;
+      rem->tv_sec = remaining_ms / 1000;
+      rem->tv_nsec = (remaining_ms % 1000) * 1000000;
+      return -EINTR;
+    }
+  }
   return 0;
 }
 
@@ -1687,22 +1710,85 @@ static int64_t sys_ioctl(int fd, unsigned long req, void *arg) {
   return -ENOTTY;
 }
 
-static int64_t sys_rt_sigaction(int sig, const void *act, void *oact,
-                                size_t sz) {
-  (void)sig;
-  (void)act;
-  (void)oact;
-  (void)sz;
+static int64_t sys_rt_sigaction(int sig, const void *act, void *oact, size_t sz) {
+  if (!current) return -ESRCH;
+  if (sig < 1 || sig >= 64) return -EINVAL;
+  if (sig == SIGKILL || sig == SIGSTOP) return -EINVAL;
+
+  if (oact && access_ok(oact, sizeof(uint64_t))) {
+    uint64_t *old = (uint64_t *)oact;
+    *old = current->sig_handlers[sig];
+  }
+
+  if (act && access_ok(act, sizeof(uint64_t))) {
+    uint64_t *new_h = (uint64_t *)act;
+    current->sig_handlers[sig] = *new_h;
+  }
+
   return 0;
 }
-static int64_t sys_rt_sigprocmask(int how, const void *set, void *oldset,
-                                  size_t sz) {
-  (void)how;
-  (void)set;
-  (void)oldset;
-  (void)sz;
+static int64_t sys_rt_sigprocmask(int how, const void *set, void *oldset, size_t sz) {
+  if (!current) return -ESRCH;
+
+  if (oldset && access_ok(oldset, sizeof(uint64_t))) {
+    *(uint64_t *)oldset = current->sig_mask;
+  }
+
+  if (set && access_ok(set, sizeof(uint64_t))) {
+    uint64_t new_mask = *(uint64_t *)set;
+
+    switch (how) {
+      case 0:
+        current->sig_mask |= new_mask;
+        break;
+      case 1:
+        current->sig_mask &= ~new_mask;
+        break;
+      case 2:
+        current->sig_mask = new_mask;
+        break;
+      default:
+        return -EINVAL;
+    }
+
+    current->sig_mask &= ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
+  }
+
   return 0;
 }
+
+static int64_t sys_rt_sigreturn(struct pt_regs *r) {
+  if (!current) return -ESRCH;
+
+  uint64_t frame_addr = r->saved_rsp;
+  if (!access_ok((void *)frame_addr, sizeof(struct signal_frame))) {
+    return -EFAULT;
+  }
+
+  struct signal_frame *frame = (struct signal_frame *)frame_addr;
+
+  r->rax = frame->rax;
+  r->rbx = frame->rbx;
+  r->rcx = frame->rcx;
+  r->rdx = frame->rdx;
+  r->rsi = frame->rsi;
+  r->rdi = frame->rdi;
+  r->rbp = frame->rbp;
+  r->r8 = frame->r8;
+  r->r9 = frame->r9;
+  r->r10 = frame->r10;
+  r->r11 = frame->r11;
+  r->r12 = frame->r12;
+  r->r13 = frame->r13;
+  r->r14 = frame->r14;
+  r->r15 = frame->r15;
+  r->saved_rip = frame->rip;
+  r->saved_rsp = frame->rsp;
+  r->saved_rflags = frame->rflags;
+
+  return 0;
+}
+
 static int64_t sys_sigaltstack(const void *ss, void *old_ss) {
   (void)ss;
   (void)old_ss;
@@ -1823,6 +1909,43 @@ static int64_t sys_reboot(int magic1, int magic2, int cmd, void *arg) {
     (void)magic1; (void)magic2; (void)cmd; (void)arg;
     acpi_shutdown();
     return -EFAULT;
+}
+
+int64_t sys_kill(int pid, int sig) {
+  if (sig < 0 || sig >= 64) return -EINVAL;
+
+  if (pid > 0) {
+    struct task *t = current->next;
+    struct task *start = t;
+    do {
+      if ((int)t->pid == pid) {
+        t->sig_pending |= (1ULL << sig);
+        if (t->state == T_BLOCKED) {
+          t->state = T_READY;
+        }
+        return 0;
+      }
+      t = t->next;
+    } while (t != start);
+    return -ESRCH;
+  }
+
+  if (pid == 0 || pid == -1) {
+    struct task *t = current->next;
+    struct task *start = t;
+    do {
+      if (pid == -1 || t->pgrp == current->pgrp) {
+        t->sig_pending |= (1ULL << sig);
+        if (t->state == T_BLOCKED) {
+          t->state = T_READY;
+        }
+      }
+      t = t->next;
+    } while (t != start);
+    return 0;
+  }
+
+  return -EINVAL;
 }
 
 int64_t syscall_dispatch(struct pt_regs *r) {
@@ -1957,8 +2080,8 @@ int64_t syscall_dispatch(struct pt_regs *r) {
   case 14:
     return sys_rt_sigprocmask((int)r->rdi, (const void *)r->rsi, (void *)r->rdx,
                               (size_t)r->r10);
-  case 15:
-    return 0;
+	case 15:
+  	return sys_rt_sigreturn(r);
   case 16:
     return sys_ioctl((int)r->rdi, r->rsi, (void *)r->rdx);
   case 20:
@@ -2019,7 +2142,7 @@ int64_t syscall_dispatch(struct pt_regs *r) {
   case 61:
     return wait4((int)r->rdi, (int *)r->rsi);
   case 62:
-    return 0;
+    return sys_kill((int)r->rdi, (int)r->rsi);
   case 63:
     return sys_uname((struct utsname *)r->rdi);
   case 72:
