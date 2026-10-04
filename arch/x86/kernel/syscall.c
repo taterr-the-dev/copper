@@ -1631,47 +1631,79 @@ static int64_t sys_getcwd(char *buf, size_t size) {
   return (int64_t)len;
 }
 
+#define TIOCGWINSZ   0x5413
+#define TIOCSWINSZ   0x5414
+#define TCGETS       0x5401
+#define TCSETS       0x5402
+#define TCSETSW      0x5403
+#define TCSETSF      0x5404
+#define TIOCGPGRP    0x540F
+#define TIOCSPGRP    0x5410
+#define TIOCGPTN     0x80045430
+#define TIOCSPTLCK   0x40045431
+#define FIONREAD     0x541B
+
 static int64_t sys_ioctl(int fd, unsigned long req, void *arg) {
-  if (arg && !access_ok(arg, 128))
-    return -EFAULT;
-#ifdef CONFIG_TTY
-  if (fd >= 0 && fd < MAXFD && fdtable[fd].used && fdtable[fd].f.tty) {
+  if (fd < 0 || fd >= MAXFD || !fdtable[fd].used)
+    return -EBADF;
+
+  if (fdtable[fd].f.tty) {
     struct tty *tty = (struct tty *)fdtable[fd].f.tty;
-    if (req == 0x5401) {
-      if (arg)
-        memcpy(arg, &tty->termios, sizeof(struct termios));
-      return 0;
+    
+    switch (req) {
+      case TCGETS:
+        if (arg && access_ok(arg, sizeof(struct termios))) {
+          memcpy(arg, &tty->termios, sizeof(struct termios));
+        }
+        return 0;
+        
+      case TCSETS:
+      case TCSETSW:
+      case TCSETSF:
+        if (arg && access_ok(arg, sizeof(struct termios))) {
+          memcpy(&tty->termios, arg, sizeof(struct termios));
+        }
+        return 0;
+        
+      case TIOCGWINSZ:
+        if (arg && access_ok(arg, sizeof(struct winsize))) {
+          memcpy(arg, &tty->winsize, sizeof(struct winsize));
+        }
+        return 0;
+        
+      case TIOCSWINSZ:
+        if (arg && access_ok(arg, sizeof(struct winsize))) {
+          memcpy(&tty->winsize, arg, sizeof(struct winsize));
+        }
+        return 0;
+        
+      case TIOCGPGRP:
+        if (arg && access_ok(arg, sizeof(int))) {
+          *(int *)arg = tty->pgrp ? tty->pgrp : current->pid;
+        }
+        return 0;
+        
+      case TIOCSPGRP:
+        if (arg && access_ok(arg, sizeof(int))) {
+          tty->pgrp = *(int *)arg;
+        }
+        return 0;
+        
+      case FIONREAD:
+        if (arg && access_ok(arg, sizeof(int))) {
+          *(int *)arg = tty->read_count;
+        }
+        return 0;
+        
+      case TIOCGPTN:
+        if (arg && access_ok(arg, sizeof(int))) {
+          *(int *)arg = 0;
+        }
+        return 0;
+      case TIOCSPTLCK:
+        return 0;
     }
-    if (req == 0x5402 || req == 0x5403 || req == 0x5404) {
-      if (arg)
-        memcpy(&tty->termios, arg, sizeof(struct termios));
-      return 0;
-    }
-    if (req == 0x5413) {
-      if (arg)
-        memcpy(arg, &tty->winsize, sizeof(struct winsize));
-      return 0;
-    }
-    if (req == 0x5414) {
-      if (arg)
-        memcpy(&tty->winsize, arg, sizeof(struct winsize));
-      return 0;
-    }
-    if (req == 0x540F) {
-      if (arg)
-        *(int *)arg = tty->pgrp ? tty->pgrp : 1;
-      return 0;
-    }
-    if (req == 0x5410) {
-      if (arg)
-        tty->pgrp = *(int *)arg;
-      return 0;
-    }
-    if (req == 0x540E)
-      return 0;
-    return -ENOTTY;
   }
-#endif
 #ifdef CONFIG_NET
   if (req == 0x8916) {
     struct ifreq_net {
@@ -1684,7 +1716,7 @@ static int64_t sys_ioctl(int fd, unsigned long req, void *arg) {
       } addr;
     } *ifr = arg;
 
-    if (ifr) {
+    if (ifr && access_ok(ifr, sizeof(*ifr))) {
       extern void net_set_ip(uint32_t);
       net_set_ip(ifr->addr.addr);
       return 0;
@@ -1692,21 +1724,6 @@ static int64_t sys_ioctl(int fd, unsigned long req, void *arg) {
     return -EFAULT;
   }
 #endif
-  if (req == 0x5401) {
-    if (arg) {
-      memset(arg, 0, 120);
-      uint32_t *c_lflag = (uint32_t *)((uint8_t *)arg + 12);
-      *c_lflag = 0x10A;
-    }
-    return 0;
-  }
-  if (req == 0x5402 || req == 0x5403 || req == 0x5404)
-    return 0;
-  if (req == 0x5413) {
-    if (arg)
-      memset(arg, 0, 8);
-    return 0;
-  }
   return -ENOTTY;
 }
 
