@@ -99,7 +99,7 @@ void acpi_enable_power_button(void) {
     en_reg.address += 2;
     arch_acpi_pm_write_gas(&en_reg, 0x100);
     pic_clear_mask(acpi.sci_interrupt);
-    con_puts("[ACPI] Power button event enabled.");
+    con_puts("[ACPI] Power button event enabled.\n");
 }
 
 void acpi_init(void) {

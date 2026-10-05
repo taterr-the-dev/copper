@@ -1033,8 +1033,8 @@ static int64_t sys_mmap(uint64_t a, size_t len, int p, int f, int fd,
     vmas[vma_idx].prot = p;
 
     struct fs_file *mf = &fdtable[fd].f;
-    uint64_t flags = 0x05;
-    if (p & 0x2) flags |= 0x02;
+		// TODO proper VMA
+    uint64_t flags = 0x07;
 
     for (size_t off = 0; off < len; off += 4096) {
       uint64_t pg = pmm_alloc();
@@ -1167,22 +1167,30 @@ static int64_t sys_mprotect(uint64_t addr, size_t len, int prot) {
   if (addr >= 0x0000800000000000ULL || addr + len > 0x0000800000000000ULL) {
     return -ENOMEM;
   }
+  int pid = current ? current->pid : 0;
+  for (int i = 0; i < MAX_VMAS; i++) {
+    if (vmas[i].used && vmas[i].pid == pid) {
+      if (addr < vmas[i].start + vmas[i].length && (addr + len) > vmas[i].start) {
+        vmas[i].prot = prot;
+      }
+    }
+  }
   uint64_t *p4 = (uint64_t *)current->cr3;
   uint64_t end = addr + len;
   for (uint64_t curr = addr; curr < end; curr += 4096) {
     int i4 = (curr >> 39) & 511;
-    if (!(p4[i4] & 1)) return -ENOMEM;
+		if (!(p4[i4] & 1)) continue;
     uint64_t *p3 = (uint64_t *)(p4[i4] & 0x000FFFFFFFFFF000ULL);
     int i3 = (curr >> 30) & 511;
-    if (!(p3[i3] & 1)) return -ENOMEM;
-    if (p3[i3] & 0x80) return -ENOTSUP;
+    if (!(p3[i3] & 1)) continue;
+    if (p3[i3] & 0x80) continue;
     uint64_t *p2 = (uint64_t *)(p3[i3] & 0x000FFFFFFFFFF000ULL);
     int i2 = (curr >> 21) & 511;
-    if (!(p2[i2] & 1)) return -ENOMEM;
-    if (p2[i2] & 0x80) return -ENOTSUP;
+    if (!(p2[i2] & 1)) continue;
+    if (p2[i2] & 0x80) continue;
     uint64_t *p1 = (uint64_t *)(p2[i2] & 0x000FFFFFFFFFF000ULL);
     int i1 = (curr >> 12) & 511;
-    if (!(p1[i1] & 1)) return -ENOMEM;
+    if (!(p1[i1] & 1)) continue;
     uint64_t flags = 0x05;
     if (prot & 2) flags |= 0x02;
     uint64_t pa = p1[i1] & 0x000FFFFFFFFFF000ULL;
@@ -2217,8 +2225,14 @@ int64_t syscall_dispatch(struct pt_regs *r) {
     return sys_reboot((int)r->rdi, (int)r->rsi, (int)r->rdx, (void *)r->r10);
   case 186:
     return sys_gettid();
-  case 218:
-    return current ? current->pid : 1;
+  case 218: {
+    int *tidptr = (int *)r->rdi;
+    int tid = current ? current->pid : 1;
+    if (tidptr && access_ok(tidptr, sizeof(int))) {
+      *tidptr = tid;
+    }
+    return tid;
+  }
   case 221:
     return 0;
   case 228:

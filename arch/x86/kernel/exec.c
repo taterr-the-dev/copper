@@ -270,7 +270,7 @@ int execve(const char *path, char *const *argv, char *const *envp) {
   size_t main_phdrs_size = main_phnum * main_phentsize;
   if (main_phdrs_size > 4096) main_phdrs_size = 4096;
   memcpy(main_phdrs_buf, exec_buf + main_phoff, main_phdrs_size);
-  Elf64_Phdr *ph_buf = (Elf64_Phdr *)(exec_buf + e->e_phoff);
+  Elf64_Phdr *ph_buf = (Elf64_Phdr *)main_phdrs_buf;
   for (int i = 0; i < e->e_phnum; i++) {
     if (ph_buf[i].p_type == PT_TLS && ph_buf[i].p_align == 0) {
       ph_buf[i].p_align = 8;
@@ -341,15 +341,19 @@ int execve(const char *path, char *const *argv, char *const *envp) {
     }
   }
 
-  uint64_t phdr_vaddr = main_base + main_phoff;
-
-  if (phdr_vaddr > 0 && phdr_vaddr < 0x1000) {
-    uint64_t phdr_pg = pmm_alloc();
-    if (phdr_pg) {
-      vm_map(new_cr3, 0, phdr_pg, 0x07);
-      memset((void *)phdr_pg, 0, 4096);
-      memcpy((void *)(phdr_pg + phdr_vaddr), main_phdrs_buf, main_phdrs_size);
+  uint64_t phdr_vaddr = 0;
+  for (int i = 0; i < main_phnum; i++) {
+    if (ph_buf[i].p_type == PT_LOAD) {
+      if (main_phoff >= ph_buf[i].p_offset &&
+          main_phoff < ph_buf[i].p_offset + ph_buf[i].p_filesz) {
+        phdr_vaddr = main_base + ph_buf[i].p_vaddr +
+                     (main_phoff - ph_buf[i].p_offset);
+        break;
+      }
     }
+  }
+  if (!phdr_vaddr) {
+    phdr_vaddr = main_base + main_phoff;
   }
 
   static uint64_t auxv[64];
@@ -359,7 +363,7 @@ int execve(const char *path, char *const *argv, char *const *envp) {
   auxv[ai++] = AT_PHENT;
   auxv[ai++] = sizeof(Elf64_Phdr);
   auxv[ai++] = AT_PHNUM;
-  auxv[ai++] = e->e_phnum;
+  auxv[ai++] = main_phnum;
   auxv[ai++] = AT_PAGESZ;
   auxv[ai++] = 4096;
   auxv[ai++] = AT_CLKTCK;
