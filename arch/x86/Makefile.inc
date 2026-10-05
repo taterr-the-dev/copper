@@ -17,6 +17,7 @@ CFILES += arch/x86/kernel/syscall.c \
           arch/x86/kernel/exec.c \
           arch/x86/kernel/user.c \
           arch/x86/kernel/acpi_arch.c \
+          arch/x86/kernel/pci.c \
           arch/x86/kernel/arch.c
 
 ifeq ($(CONFIG_LAPIC),y)

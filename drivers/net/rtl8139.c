@@ -4,6 +4,7 @@
 #include <kernel/io.h>
 #include <kernel/string.h>
 #include <kernel/types.h>
+#include <kernel/pci.h>
 
 #ifdef CONFIG_NET_RTL8139
 extern void netif_rx_packet(uint8_t *pkt, int len);
@@ -16,14 +17,6 @@ static uint8_t *tx_buffer = NULL;
 static uint32_t rx_phys_addr = 0;
 static uint32_t tx_phys_addr = 0;
 static uint32_t rx_read_ptr = 0;
-
-static uint32_t pci_config_read32(uint8_t bus, uint8_t slot, uint8_t func,
-                                  uint8_t offset) {
-  uint32_t address = (uint32_t)((1 << 31) | (bus << 16) | (slot << 11) |
-                                (func << 8) | (offset & 0xFC));
-  outl(0xCF8, address);
-  return inl(0xCFC);
-}
 
 static void rtl8139_irq() {
   if (!io_base)

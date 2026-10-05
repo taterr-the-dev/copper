@@ -7,6 +7,7 @@
 #include <kernel/types.h>
 #include <kernel/vm.h>
 #include <kernel/arch.h>
+#include <kernel/pci.h>
 
 #ifdef CONFIG_NET_E1000
 
@@ -54,14 +55,6 @@ static uint32_t e1000_reg_read(uint32_t reg) {
 }
 static void e1000_reg_write(uint32_t reg, uint32_t val) {
   *(volatile uint32_t *)(mmio_base + reg) = val;
-}
-
-static uint32_t pci_config_read32(uint8_t bus, uint8_t slot, uint8_t func,
-                                  uint8_t offset) {
-  uint32_t address = (uint32_t)((1 << 31) | (bus << 16) | (slot << 11) |
-                                (func << 8) | (offset & 0xFC));
-  outl(0xCF8, address);
-  return inl(0xCFC);
 }
 
 static void e1000_irq() {

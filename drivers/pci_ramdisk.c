@@ -6,6 +6,7 @@
 #include <kernel/types.h>
 #include <kernel/string.h>
 #include <kernel/arch.h>
+#include <kernel/pci.h>
 
 extern void put_u64(uint64_t v);
 extern void hex64(uint64_t v);
@@ -22,13 +23,6 @@ struct pci_ramdisk {
 };
 
 static struct pci_ramdisk ramdisk = {0};
-
-static uint32_t pci_config_read32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
-    uint32_t address = (uint32_t)((1 << 31) | (bus << 16) | (slot << 11) |
-                                  (func << 8) | (offset & 0xFC));
-    outl(0xCF8, address);
-    return inl(0xCFC);
-}
 
 int pci_ramdisk_init(void) {
     for (int bus = 0; bus < 256; bus++) {
