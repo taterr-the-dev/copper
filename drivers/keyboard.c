@@ -36,7 +36,6 @@ void kbd_init(void) { h = t = 0; }
 
 void keyboard_irq(void) {
   uint8_t sc = inb(0x60);
-  outb(0x20, 0x20);
 
   if (sc == 0xE0) {
     e0_pressed = 1;

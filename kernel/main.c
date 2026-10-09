@@ -43,6 +43,7 @@ extern void user_thread(void *);
 #include <kernel/acpi.h>
 #include <kernel/acpi_bus.h>
 #include <kernel/pci.h>
+#include <kernel/ioapic.h>
 
 extern void put_u64(uint64_t v);
 #ifdef CONFIG_RUN_INIT
@@ -261,6 +262,13 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
 #endif
 	acpi_init();
 	acpi_bus_init();
+  if (acpi.ioapic_count > 0) {
+    ioapic_init(acpi.ioapic_addresses[0]);
+    for (int i = 0; i < 16; i++) {
+      ioapic_route_irq(i, 32 + i, 0);
+      pic_set_mask(i);
+    }
+  }
 	pci_init();
 #ifdef CONFIG_SCHED
   scheduler_init();
