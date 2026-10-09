@@ -144,16 +144,19 @@ int64_t ext_write(struct fs_file *f, const void *buf, size_t len)
         written += to_write;
     }
 
-    uint32_t new_size = pos + written;
-    if (new_size > size) {
-        memcpy(in + 4, &new_size, 4);
-        uint32_t blocks = (new_size + 511) / 512;
-        memcpy(in + 28, &blocks, 4);
-        ext_write_inode(s, ino, in);
-    }
+  uint32_t new_size = pos + written;
+  if (new_size > size) {
+    memcpy(in + 4, &new_size, 4);
+    uint32_t blocks = (new_size + 511) / 512;
+    memcpy(in + 28, &blocks, 4);
+  }
 
-    f->pos += written;
-    return written;
+  if (written > 0) {
+    ext_write_inode(s, ino, in);
+  }
+
+  f->pos += written;
+  return written;
 }
 
 int ext_readlink(void *sbp, const char *path, char *buf, size_t bufsz) {
