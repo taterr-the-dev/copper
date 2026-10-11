@@ -37,7 +37,9 @@ syscall_entry:
     push %rbx
     push %rax
     mov %rsp, %rdi
+    sti
     call syscall_dispatch
+    cli
     mov %rax, debug_syscall_ret(%rip)
     mov %rax, (%rsp)
     pop %rax

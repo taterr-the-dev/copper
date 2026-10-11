@@ -15,6 +15,8 @@ extern void enter_usermode(uint64_t entry, uint64_t sp);
 extern void reset_mm_state(int pid);
 extern void put_u64(uint64_t v);
 extern void hex64(uint64_t v);
+extern uint64_t g_fb_phys;
+extern uint64_t g_fb_size;
 #define EXEC_BUF_SIZE (4 * 1024 * 1024)
 #define EXEC_BUF_VA 0x80000000ULL
 
@@ -211,6 +213,14 @@ int execve(const char *path, char *const *argv, char *const *envp) {
   uint64_t *new_cr3 = vm_new_as();
   __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
 
+  if (g_fb_phys && g_fb_size) {
+    uint64_t fb_va_base = 0xFFFF900000000000ULL;
+    uint64_t fb_start_page = g_fb_phys & ~0xFFFULL;
+    uint64_t total_pages = (g_fb_size + 0xFFF) / 4096;
+    for (uint64_t i = 0; i < total_pages; i++) {
+        vm_map(new_cr3, fb_va_base + (i * 4096), fb_start_page + (i * 4096), 0x03);
+    }
+  }
   if (!new_cr3) {
     return -1;
   }

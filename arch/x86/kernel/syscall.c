@@ -509,8 +509,15 @@ void cleanup_process_fds(int pid) {
   if (pid < 0 || pid >= 64)
     return;
 
+  extern struct tty *console_tty;
+
   for (int i = 0; i < MAXFD; i++) {
     if (fdtables[pid][i].used) {
+      if (fdtables[pid][i].f.tty == console_tty) {
+        fdtables[pid][i].used = 0;
+        continue; 
+      }
+
       if (strcmp(fdtables[pid][i].path, "/pipe/read") == 0) {
         struct pipe_buf *pb = fdtables[pid][i].f.priv;
         if (pb)
@@ -1299,9 +1306,6 @@ static int64_t sys_arch_prctl(int c, uint64_t a) {
   return 0;
 }
 static int64_t sys_exit(int c) {
-  if (current) {
-    cleanup_process_fds(current->pid);
-  }
 #ifdef CONFIG_DEBUG_SYSCALL
   con_puts("[exit] code=");
   put_u64((uint64_t)(int64_t)c);
@@ -1313,9 +1317,9 @@ static int64_t sys_exit(int c) {
   do_exit(c);
   return 0;
 #else
-  (void)c;
-  __asm__ volatile("cli;hlt");
-  return 0;
+  for (;;) {
+    yield();
+  }
 #endif
 }
 

@@ -114,7 +114,6 @@ void isr_handler(struct int_frame *f) {
   }
 
   uint8_t irq = f->int_no - 32;
-
   if (irq == 0) {
     timer_tick();
 #ifdef CONFIG_SCHED

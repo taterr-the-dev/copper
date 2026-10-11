@@ -2,13 +2,17 @@
 .align 8
 mboot1_start:
     .long 0x1BADB002
-    .long 0x00010003
-    .long -(0x1BADB002 + 0x00010003)
+    .long 0x00010007
+    .long 0xE4514FF7
     .long mboot1_start
     .long 0x100000
     .long _load_end
     .long _kernel_end
     .long _start
+    .long 0
+    .long 1024
+    .long 768
+    .long 32
 .section .text
 .code32
 .global _start

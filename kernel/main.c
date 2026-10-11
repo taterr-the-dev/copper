@@ -43,7 +43,7 @@ extern void user_thread(void *);
 #include <kernel/acpi.h>
 #include <kernel/acpi_bus.h>
 #include <kernel/pci.h>
-#include <kernel/ioapic.h>
+#include <kernel/fbcon.h>
 
 extern void put_u64(uint64_t v);
 #ifdef CONFIG_RUN_INIT
@@ -51,13 +51,16 @@ static void init_thread(void *arg) {
   (void)arg;
   int rc = execve(CONFIG_INIT_PATH, 0, 0);
   for (;;)
-    arch_hlt();
+    __asm__ volatile("sti; hlt");
 }
 #endif
 
 #ifdef CONFIG_PCI_RAMDISK
 extern int pci_ramdisk_init(void);
 #endif
+
+uint64_t g_fb_phys = 0;
+uint64_t g_fb_size = 0;
 
 void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   con_init();
@@ -69,7 +72,6 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
     con_puts("[OK] Booted via Multiboot.\n");
   else
     con_puts("[!!] Invalid Multiboot magic!\n");
-
   gdt_init();
   arch_init_fpu();
   con_puts("[OK] GDT initialized.\n");
@@ -96,6 +98,50 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   vm_sanitize_boot_cr3();
 #endif
 #endif
+  struct multiboot_info *mbi = (struct multiboot_info *)mboot_ptr;
+  if (mbi->flags & (1 << 12)) {
+    con_puts("[VESA] Framebuffer detected!\n");
+    con_puts("[VESA] Resolution: ");
+    put_u64(mbi->framebuffer_width);
+    con_puts("x");
+    put_u64(mbi->framebuffer_height);
+    con_puts("x");
+    put_u64(mbi->framebuffer_bpp);
+    con_puts("\n");
+
+    uint64_t fb_phys = mbi->framebuffer_addr;
+    uint64_t fb_width = mbi->framebuffer_width;
+    uint64_t fb_height = mbi->framebuffer_height;
+    uint64_t fb_bpp = mbi->framebuffer_bpp;
+    uint64_t fb_pitch = mbi->framebuffer_pitch;
+
+    if (fb_pitch == fb_width) {
+      fb_pitch = fb_width * (fb_bpp / 8);
+    }
+
+    uint64_t fb_size = fb_pitch * fb_height;
+
+    uint64_t fb_start_page = fb_phys & ~0xFFFULL;
+    uint64_t fb_offset = fb_phys & 0xFFF;
+    uint64_t fb_va_base = 0xFFFF900000000000ULL;
+    uint64_t fb_va = fb_va_base + fb_offset;
+    uint64_t total_pages = (fb_size + fb_offset + 0xFFF) / 4096;
+    g_fb_phys = fb_phys;
+    g_fb_size = fb_size;
+    for (uint64_t i = 0; i < total_pages; i++) {
+        vm_map((uint64_t *)boot_cr3, fb_va_base + (i * 4096), fb_start_page + (i * 4096), 0x03);
+    }
+    con_puts("[VESA] Mapped ");
+    put_u64(total_pages);
+    con_puts(" pages. Pitch=");
+    put_u64(fb_pitch);
+    con_puts("\n");
+
+    fbcon_init(fb_va, fb_width, fb_height, fb_pitch);
+    con_puts("[VESA] Framebuffer console active!\n");
+  } else {
+    con_puts("[!!] No framebuffer info from bootloader!\n");
+  }
 #ifdef CONFIG_FS_VFS
   fs_init();
   ata_init();
@@ -262,13 +308,6 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
 #endif
 	acpi_init();
 	acpi_bus_init();
-  if (acpi.ioapic_count > 0) {
-    ioapic_init(acpi.ioapic_addresses[0]);
-    for (int i = 0; i < 16; i++) {
-      ioapic_route_irq(i, 32 + i, 0);
-      pic_set_mask(i);
-    }
-  }
 	pci_init();
 #ifdef CONFIG_SCHED
   scheduler_init();
@@ -284,8 +323,9 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   con_puts("[IDLE] idle loop (threads keep running).\n");
 #endif
 #endif
-  for (;;)
-    arch_hlt();
+  for (;;) {
+    __asm__ volatile("sti; hlt");
+  }
 }
 
 #ifdef CONFIG_SCHED

@@ -1,6 +1,7 @@
 #include <autoconf.h>
 #include <kernel/console.h>
 #include <kernel/arch.h>
+#include <kernel/fbcon.h>
 #ifdef CONFIG_SERIAL_UART
 #include <drivers/serial.h>
 #endif
@@ -33,6 +34,7 @@ void con_putc(char c) {
 #ifdef CONFIG_VGA_TEXT
   vga_putc(c);
 #endif
+  fbcon_putc(c);
   irq_restore(f);
 }
 void con_puts(const char *s) {

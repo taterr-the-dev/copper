@@ -124,7 +124,6 @@ void kthread_exit(void) {
 #endif
 
 void do_exit(int code) {
-  __asm__ volatile("cli");
   current->exit_code = (code & 0xff) << 8;
   current->state = T_DEAD;
 
@@ -135,9 +134,9 @@ void do_exit(int code) {
     }
   }
 
-  schedule();
-  for (;;)
-    __asm__ volatile("hlt");
+  for (;;) {
+    yield();
+  }
 }
 
 int wait4(int pid, int *status) {
@@ -211,15 +210,16 @@ void alloc_fresh_stack(struct task *t) {
 }
 
 void kill_current(int sig) {
-  __asm__ volatile("cli");
-
   current->exit_code = sig & 0x7f;
   current->state = T_DEAD;
-  if (current->parent && current->parent->state == T_BLOCKED)
+  
+  if (current->parent && current->parent->state == T_BLOCKED) {
     current->parent->state = T_READY;
-  schedule();
-  for (;;)
-    __asm__ volatile("hlt");
+  }
+
+  for (;;) {
+    yield();
+  }
 }
 void send_signal(int pid, int sig) {
   struct task *t = current ? current->next : NULL;

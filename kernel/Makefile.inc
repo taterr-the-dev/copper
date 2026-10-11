@@ -8,7 +8,8 @@ CFILES += kernel/main.c \
           kernel/binfmt.c \
           kernel/blkdev.c \
           kernel/acpi.c \
-          kernel/acpi_bus.c
+          kernel/acpi_bus.c \
+          kernel/fbcon.c
 
 ifeq ($(CONFIG_TTY),y)
 	CFILES += kernel/tty.c kernel/pty.c

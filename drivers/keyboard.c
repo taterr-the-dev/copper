@@ -32,11 +32,16 @@ static int shift_pressed = 0;
 static int ctrl_pressed = 0;
 static int e0_pressed = 0;
 
-void kbd_init(void) { h = t = 0; }
+void kbd_init(void) {
+  h = t = 0;
+  while (inb(0x64) & 1) {
+    inb(0x60);
+  }
+}
 
 void keyboard_irq(void) {
   uint8_t sc = inb(0x60);
-
+  outb(0x20, 0x20);
   if (sc == 0xE0) {
     e0_pressed = 1;
     return;
@@ -97,11 +102,20 @@ void keyboard_irq(void) {
   extern struct tty *console_tty;
   if (console_tty) {
     tty_insert_flip_char(console_tty, c);
+    if (current && current->next) {
+        struct task *t = current->next;
+        struct task *start = t;
+        do {
+            if (t->state == T_BLOCKED) {
+                t->state = T_READY;
+            }
+            t = t->next;
+        } while (t != start);
+    }
   } else {
     buf[t++ & 255] = c;
   }
 }
-
 int kbd_read(char *dst, int n) {
   int c = 0;
   while (c < n && h != t) {
