@@ -2,17 +2,26 @@
 #include <kernel/io.h>
 #include <kernel/console.h>
 #include <kernel/string.h>
+#include <kernel/acpi.h>
 
 extern void put_u64(uint64_t v);
 
 struct pci_device pci_devices[PCI_MAX_DEVICES];
 int pci_device_count = 0;
+void pci_scan_bus(uint8_t bus);
+
+static uint64_t ecam_base_addr = 0;
 
 uint32_t pci_config_read32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
-    uint32_t address = (uint32_t)((1 << 31) | (bus << 16) | (slot << 11) |
-                                  (func << 8) | (offset & 0xFC));
-    outl(0xCF8, address);
-    return inl(0xCFC);
+    if (ecam_base_addr) {
+        uint64_t addr = ecam_base_addr + ((uint64_t)bus << 20) + (slot << 15) + (func << 12) + offset;
+        return *(volatile uint32_t *)addr;
+    } else {
+        uint32_t address = (uint32_t)((1 << 31) | (bus << 16) | (slot << 11) |
+                                      (func << 8) | (offset & 0xFC));
+        outl(0xCF8, address);
+        return inl(0xCFC);
+    }
 }
 
 uint16_t pci_config_read16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
@@ -20,17 +29,30 @@ uint16_t pci_config_read16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offs
     return (uint16_t)((data >> ((offset & 2) * 8)) & 0xFFFF);
 }
 
+uint8_t pci_config_read8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+    uint32_t data = pci_config_read32(bus, slot, func, offset & 0xFC);
+    return (uint8_t)((data >> ((offset & 3) * 8)) & 0xFF);
+}
+
 void pci_config_write16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint16_t val) {
-    uint32_t address = (uint32_t)((1 << 31) | (bus << 16) | (slot << 11) |
-                                  (func << 8) | (offset & 0xFC));
-    outl(0xCF8, address);
-    uint32_t tmp = inl(0xCFC);
-    if (offset & 2) {
-        tmp = (tmp & 0x0000FFFF) | ((uint32_t)val << 16);
+    if (ecam_base_addr) {
+        uint64_t addr = ecam_base_addr + ((uint64_t)bus << 20) + (slot << 15) + (func << 12) + offset;
+        *(volatile uint16_t *)addr = val;
     } else {
-        tmp = (tmp & 0xFFFF0000) | val;
+        uint32_t address = (uint32_t)((1 << 31) | (bus << 16) | (slot << 11) |
+                                      (func << 8) | (offset & 0xFC));
+        outl(0xCF8, address);
+        uint32_t tmp = inl(0xCFC);
+        if (offset & 2) tmp = (tmp & 0x0000FFFF) | ((uint32_t)val << 16);
+        else            tmp = (tmp & 0xFFFF0000) | val;
+        outl(0xCFC, tmp);
     }
-    outl(0xCFC, tmp);
+}
+
+void pci_enable_device(struct pci_device *dev) {
+    uint16_t cmd = pci_config_read16(dev->bus, dev->slot, dev->func, 0x04);
+    cmd |= 0x05;
+    pci_config_write16(dev->bus, dev->slot, dev->func, 0x04, cmd);
 }
 
 struct pci_device *pci_find_device(uint16_t vendor, uint16_t device) {
@@ -42,48 +64,91 @@ struct pci_device *pci_find_device(uint16_t vendor, uint16_t device) {
     return NULL;
 }
 
-void pci_scan_bus(uint8_t bus) {
-    for (uint8_t slot = 0; slot < 32; slot++) {
-        uint32_t id = pci_config_read32(bus, slot, 0, 0);
-        if (id == 0xFFFFFFFF) continue;
+void pci_scan_function(uint8_t bus, uint8_t slot, uint8_t func) {
+    uint32_t id = pci_config_read32(bus, slot, func, 0x00);
+    if (id == 0xFFFFFFFF) return;
 
-        uint16_t vendor = id & 0xFFFF;
-        uint16_t device = (id >> 16) & 0xFFFF;
-        if (vendor == 0xFFFF) continue;
-        if (pci_device_count >= PCI_MAX_DEVICES) return;
+    uint16_t vendor = id & 0xFFFF;
+    uint16_t device_id = (id >> 16) & 0xFFFF;
+    if (vendor == 0xFFFF) return;
+    if (pci_device_count >= PCI_MAX_DEVICES) return;
 
-        struct pci_device *dev = &pci_devices[pci_device_count];
-        memset(dev, 0, sizeof(struct pci_device));
-        dev->bus = bus;
-        dev->slot = slot;
-        dev->func = 0;
-        dev->vendor_id = vendor;
-        dev->device_id = device;
+    struct pci_device *dev = &pci_devices[pci_device_count];
+    memset(dev, 0, sizeof(struct pci_device));
+    dev->bus = bus;
+    dev->slot = slot;
+    dev->func = func;
+    dev->vendor_id = vendor;
+    dev->device_id = device_id;
 
-        uint32_t class_info = pci_config_read32(bus, slot, 0, 0x08);
-        dev->class_code = (class_info >> 24) & 0xFF;
-        dev->subclass = (class_info >> 16) & 0xFF;
-        dev->prog_if = (class_info >> 8) & 0xFF;
+    uint32_t class_info = pci_config_read32(bus, slot, func, 0x08);
+    dev->class_code = (class_info >> 24) & 0xFF;
+    dev->subclass = (class_info >> 16) & 0xFF;
+    dev->prog_if = (class_info >> 8) & 0xFF;
 
-        dev->bar0 = pci_config_read32(bus, slot, 0, 0x10);
-        dev->bar1 = pci_config_read32(bus, slot, 0, 0x14);
-        dev->bar2 = pci_config_read32(bus, slot, 0, 0x18);
-        dev->bar3 = pci_config_read32(bus, slot, 0, 0x1C);
-        dev->bar4 = pci_config_read32(bus, slot, 0, 0x20);
-        dev->bar5 = pci_config_read32(bus, slot, 0, 0x24);
+    uint8_t header_type = pci_config_read8(bus, slot, func, 0x0C) & 0x7F;
 
-        uint16_t irq_info = pci_config_read16(bus, slot, 0, 0x3C);
-        dev->irq_line = irq_info & 0xFF;
-        dev->irq_pin = (irq_info >> 8) & 0xFF;
+    for (int i = 0; i < 6; i++) {
+        uint32_t bar = pci_config_read32(bus, slot, func, 0x10 + (i * 4));
+        if (i == 0) dev->bar0 = bar;
+        if (i == 1) dev->bar1 = bar;
+        if (i == 2) dev->bar2 = bar;
+        if (i == 3) dev->bar3 = bar;
+        if (i == 4) dev->bar4 = bar;
+        if (i == 5) dev->bar5 = bar;
+    }
 
-        pci_device_count++;
+    uint16_t irq_info = pci_config_read16(bus, slot, func, 0x3C);
+    dev->irq_line = irq_info & 0xFF;
+    dev->irq_pin = (irq_info >> 8) & 0xFF;
+
+    pci_device_count++;
+
+    if (header_type == 1) {
+        uint8_t secondary_bus = pci_config_read8(bus, slot, func, 0x19);
+        if (secondary_bus != 0) {
+            pci_scan_bus(secondary_bus);
+        }
     }
 }
 
+void pci_scan_slot(uint8_t bus, uint8_t slot) {
+    pci_scan_function(bus, slot, 0);
+
+    uint8_t header_type = pci_config_read8(bus, slot, 0, 0x0C);
+    if (header_type & 0x80) {
+        for (uint8_t func = 1; func < 8; func++) {
+            pci_scan_function(bus, slot, func);
+        }
+    }
+}
+
+void pci_scan_bus(uint8_t bus) {
+    for (uint8_t slot = 0; slot < 32; slot++) {
+        pci_scan_slot(bus, slot);
+    }
+}
+
+void pci_init_ecam(void) {}
+
 void pci_init(void) {
+    // pci_init_ecam(); TODO: ECAM support
     con_puts("[PCI] Scanning bus 0...\n");
     pci_scan_bus(0);
     con_puts("[PCI] Found ");
     put_u64(pci_device_count);
     con_puts(" device(s)\n");
+
+    for (int i = 0; i < pci_device_count; i++) {
+        struct pci_device *d = &pci_devices[i];
+        con_puts("  [PCI] ");
+        put_u64(d->vendor_id);
+        con_puts(":");
+        put_u64(d->device_id);
+        con_puts(" Class: ");
+        put_u64(d->class_code);
+        con_puts("/");
+        put_u64(d->subclass);
+        con_puts("\n");
+    }
 }
