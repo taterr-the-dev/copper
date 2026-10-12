@@ -1,4 +1,4 @@
-CFILES += drivers/acpi_cpu.c
+CFILES += drivers/acpi_cpu.c drivers/usb/uhci.c
 ifeq ($(CONFIG_SERIAL_UART),y)
     CFILES += drivers/serial.c
 endif

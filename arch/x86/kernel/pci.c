@@ -131,6 +131,8 @@ void pci_scan_bus(uint8_t bus) {
 
 void pci_init_ecam(void) {}
 
+void uhci_init(struct pci_device *dev);
+
 void pci_init(void) {
     // pci_init_ecam(); TODO: ECAM support
     con_puts("[PCI] Scanning bus 0...\n");
@@ -150,5 +152,12 @@ void pci_init(void) {
         con_puts("/");
         put_u64(d->subclass);
         con_puts("\n");
+    }
+    for (int i = 0; i < pci_device_count; i++) {
+        struct pci_device *d = &pci_devices[i];
+        if (d->class_code == 0x0C && d->subclass == 0x03) {
+            con_puts("[PCI] Found USB Controller! Initializing UHCI...\n");
+            uhci_init(d);
+        }
     }
 }
