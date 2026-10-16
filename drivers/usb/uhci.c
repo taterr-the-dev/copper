@@ -100,7 +100,7 @@ int uhci_control_transfer(uint16_t io_base, uint8_t addr, struct usb_setup_packe
     uhci_frame_list[i] = qh_ptr;
   }
 
-  volatile int timeout = 10000000;
+  volatile int timeout = 100000;
   while ((uhci_td_status.ctrl & (1 << 23)) && timeout > 0) {
     timeout--;
   }
@@ -205,7 +205,7 @@ void uhci_init(struct pci_device *dev) {
   usb_cmd = uhci_read16(io_base, UHCI_USBCMD);
   usb_cmd |= USBCMD_RS | USBCMD_CF;
   uhci_write16(io_base, UHCI_USBCMD, usb_cmd);
-  for (volatile int i = 0; i < 50000000; i++);
+  for (volatile int i = 0; i < 100000; i++);
 
   con_puts("[UHCI] Controller ready.\n");
 
@@ -240,7 +240,7 @@ void uhci_init(struct pci_device *dev) {
       con_puts("[UHCI] SET_ADDRESS failed!\n");
       continue;
     }
-    for (volatile int i = 0; i < 1000000; i++);
+    for (volatile int i = 0; i < 100000; i++);
     static_setup.bmRequestType = 0x80;
     static_setup.bRequest = 0x06;
     static_setup.wValue = 0x0100;

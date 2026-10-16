@@ -69,7 +69,7 @@ kernel: check_config $(OBJS)
 test: kernel
 	@echo "[*] ISO boot (GRUB) + real disk"
 	@bash scripts/build_iso.sh $(BUILD_DIR) $(BUILD_DIR)/copper.bin $(BUILD_DIR)/copper.iso
-	@qemu-system-x86_64 -m 1G -cdrom $(BUILD_DIR)/copper.iso $(if $(wildcard fs.img),-hda fs.img,) -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 -netdev user,id=net0,net=10.0.2.0/24,hostfwd=udp::8080-:8080,hostfwd=tcp::8090-:8090 -device e1000,netdev=net0,mac=52:54:00:12:34:57 -device ivshmem-plain,memdev=ramdisk0 -object memory-backend-ram,id=ramdisk0,size=64M -device piix3-usb-uhci,id=uhci -device usb-mouse,bus=uhci.0
+	@qemu-system-x86_64 -m 1G -cdrom $(BUILD_DIR)/copper.iso $(if $(wildcard fs.img),-hda fs.img,) -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 -netdev user,id=net0,net=10.0.2.0/24,hostfwd=udp::8080-:8080,hostfwd=tcp::8090-:8090 -device e1000,netdev=net0,mac=52:54:00:12:34:57 -device ivshmem-plain,memdev=ramdisk0 -object memory-backend-ram,id=ramdisk0,size=64M -device piix3-usb-uhci,id=uhci
 
 run: kernel
 	@echo "[*] Direct boot + real disk"
