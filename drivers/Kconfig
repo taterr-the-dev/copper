@@ -64,5 +64,8 @@ config PS2_KEYBOARD
 	bool "PS/2 keyboard driver"
 	depends on INTERRUPTS
 	default y
-
+config PS2_MOUSE
+	bool "PS/2 mouse driver"
+	depends on INTERRUPTS
+	default y
 endmenu

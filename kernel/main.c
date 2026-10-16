@@ -199,6 +199,10 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
 #ifdef CONFIG_PS2_KEYBOARD
   kbd_init();
 #endif
+#ifdef CONFIG_PS2_MOUSE
+  extern void mouse_init(void);
+  mouse_init();
+#endif
 #ifdef CONFIG_LAPIC
   pic_set_mask(0);
 #else
@@ -215,7 +219,7 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   pic_set_mask(9);
   pic_set_mask(10);
   pic_set_mask(11);
-  pic_set_mask(12);
+  pic_clear_mask(12);
   pic_set_mask(13);
   pic_clear_mask(14);
   pic_clear_mask(15);

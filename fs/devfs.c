@@ -20,6 +20,7 @@ static struct devfs_entry dev_entries[] = {
     {1, "ptmx", 0, 1, 5, 2},    {1, "stdin", 0, 1, 5, 0},
     {1, "stdout", 0, 1, 5, 1},  {1, "stderr", 0, 1, 5, 2},
     {1, "null", 0, 1, 1, 3},    {1, "zero", 0, 1, 1, 5},
+    {1, "input/mice", 0, 1, 13, 63},
 };
 
 #define NUM_STATIC_DEV (sizeof(dev_entries) / sizeof(dev_entries[0]))
@@ -110,6 +111,10 @@ static int64_t devfs_read(struct fs_file *f, void *buf, size_t len) {
     if (entry->dev_major == 5 && entry->dev_minor == 0) {
       extern int kbd_read(char *, int);
       return kbd_read((char *)buf, (int)len);
+    }
+    if (entry->dev_major == 13 && entry->dev_minor == 63) {
+        extern int mouse_read(char *, int);
+        return mouse_read((char *)buf, (int)len);
     }
   }
 

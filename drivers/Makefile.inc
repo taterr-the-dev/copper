@@ -8,6 +8,9 @@ endif
 ifeq ($(CONFIG_PS2_KEYBOARD),y)
     CFILES += drivers/keyboard.c
 endif
+ifeq ($(CONFIG_PS2_MOUSE),y)
+    CFILES += drivers/mouse.c
+endif
 ifeq ($(CONFIG_ATA),y)
     CFILES += drivers/ata.c
 endif

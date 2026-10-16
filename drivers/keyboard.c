@@ -33,10 +33,17 @@ static int ctrl_pressed = 0;
 static int e0_pressed = 0;
 
 void kbd_init(void) {
-  h = t = 0;
-  while (inb(0x64) & 1) {
-    inb(0x60);
-  }
+    h = t = 0;
+    while (inb(0x64) & 1) {
+        inb(0x60);
+    }
+    outb(0x64, 0x20);
+    uint8_t config = inb(0x60);
+    config |= 0x01;
+    config &= ~0x10;
+    outb(0x64, 0x60);
+    outb(0x60, config);
+    outb(0x64, 0xAE);
 }
 
 void keyboard_irq(void) {
