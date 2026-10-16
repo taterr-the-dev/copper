@@ -47,7 +47,7 @@ int fat_open(void *sbp, const char *path, struct fs_file *f)
     return 0;
 }
 
-static uint32_t getcluster(struct fat_sb *s, struct fat_file *ff, uint32_t idx)
+__attribute__((unused)) static uint32_t getcluster(struct fat_sb *s, struct fat_file *ff, uint32_t idx)
 {
     if (ff->root_sec > 0)
         return 0;
@@ -71,7 +71,7 @@ static uint32_t getcluster(struct fat_sb *s, struct fat_file *ff, uint32_t idx)
     return c;
 }
 
-static void update_dirent(struct fat_sb *s, struct fat_file *ff)
+__attribute__((unused)) static void update_dirent(struct fat_sb *s, struct fat_file *ff)
 {
     if (!ff->dirent_off || ff->root_sec > 0)
         return;

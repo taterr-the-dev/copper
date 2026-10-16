@@ -17,7 +17,7 @@ uint32_t pci_config_read32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offs
         uint64_t addr = ecam_base_addr + ((uint64_t)bus << 20) + (slot << 15) + (func << 12) + offset;
         return *(volatile uint32_t *)addr;
     } else {
-        uint32_t address = (uint32_t)((1 << 31) | (bus << 16) | (slot << 11) |
+        uint32_t address = (uint32_t)((1U << 31) | (bus << 16) | (slot << 11) |
                                       (func << 8) | (offset & 0xFC));
         outl(0xCF8, address);
         return inl(0xCFC);
@@ -39,7 +39,7 @@ void pci_config_write16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset,
         uint64_t addr = ecam_base_addr + ((uint64_t)bus << 20) + (slot << 15) + (func << 12) + offset;
         *(volatile uint16_t *)addr = val;
     } else {
-        uint32_t address = (uint32_t)((1 << 31) | (bus << 16) | (slot << 11) |
+        uint32_t address = (uint32_t)((1U << 31) | (bus << 16) | (slot << 11) |
                                       (func << 8) | (offset & 0xFC));
         outl(0xCF8, address);
         uint32_t tmp = inl(0xCFC);

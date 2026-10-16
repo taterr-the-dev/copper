@@ -100,7 +100,7 @@ void e1000_init() {
 
         uint16_t cmd = pci_config_read32(bus, slot, 0, 4) & 0xFFFF;
         cmd |= 0x06;
-        outl(0xCF8, (1 << 31) | (bus << 16) | (slot << 11) | 4);
+        outl(0xCF8, (1U << 31) | (bus << 16) | (slot << 11) | 4);
         outw(0xCFC, cmd);
 
         e1000_reg_write(0x0000, 0x04000000);
@@ -123,7 +123,7 @@ void e1000_init() {
 
         uint32_t rar_low = (e1000_mac[0]) | (e1000_mac[1] << 8) |
                            (e1000_mac[2] << 16) | (e1000_mac[3] << 24);
-        uint32_t rar_high = (e1000_mac[4]) | (e1000_mac[5] << 8) | (1 << 31);
+        uint32_t rar_high = (e1000_mac[4]) | (e1000_mac[5] << 8) | (1U << 31);
         e1000_reg_write(0x05400, rar_low);
         e1000_reg_write(0x05404, rar_high);
 

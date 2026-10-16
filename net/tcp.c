@@ -27,8 +27,6 @@ static struct tcp_pcb tcps[MAX_TCP];
 static uint16_t ephemeral_port = 49152;
 static uint32_t tcp_seq_base = 0x12345678;
 
-
-static uint16_t swap16(uint16_t v) { return (v >> 8) | (v << 8); }
 static uint32_t swap32(uint32_t v) {
   return ((v >> 24) & 0xFF) | ((v >> 8) & 0xFF00) | ((v << 8) & 0xFF0000) |
          ((v << 24) & 0xFF000000);
@@ -133,7 +131,7 @@ static void send_tcp(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
   netif_tx(pkt, total_len);
 }
 
-void tcp_input(uint8_t *tcp, int len, uint32_t src_ip, uint32_t dst_ip) {
+void tcp_input(uint8_t *tcp, int len, uint32_t src_ip, uint32_t dst_ip __attribute__((unused))) {
   if (len < 20) return;
 
   uint8_t data_off = (tcp[12] >> 4) * 4;
@@ -142,7 +140,6 @@ void tcp_input(uint8_t *tcp, int len, uint32_t src_ip, uint32_t dst_ip) {
   uint16_t src_port = (tcp[0] << 8) | tcp[1];
   uint16_t dst_port = (tcp[2] << 8) | tcp[3];
   uint32_t seq = swap32(*(uint32_t *)(tcp + 4));
-  uint32_t ack_num = swap32(*(uint32_t *)(tcp + 8));
   uint8_t flags = tcp[13];
 
   uint8_t *payload = tcp + data_off;

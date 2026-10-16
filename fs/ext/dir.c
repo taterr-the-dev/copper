@@ -1,5 +1,4 @@
 #include "ext.h"
-#include "extents.h"
 #include <kernel/syscall.h>
 extern void put_u64(uint64_t v);
 

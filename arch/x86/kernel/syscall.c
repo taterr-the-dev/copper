@@ -108,7 +108,7 @@ static inline bool access_ok(const void *ptr, size_t size) {
   return true;
 }
 
-static size_t safe_strnlen(const char *s, size_t maxlen) {
+__attribute__((unused)) static size_t safe_strnlen(const char *s, size_t maxlen) {
   size_t len = 0;
   while (len < maxlen && s[len] != '\0')
     len++;
@@ -917,9 +917,9 @@ void reset_mm_state(int pid) {
 }
 
 static uint8_t *mmap_arena;
-static size_t mmap_off = 0;
+__attribute__((unused)) static size_t mmap_off = 0;
 static size_t mmap_cap = 0;
-static void mmap_arena_get(void) {
+__attribute__((unused)) static void mmap_arena_get(void) {
   if (mmap_arena)
     return;
   uint64_t b = pmm_alloc();
@@ -1420,7 +1420,7 @@ struct fork_ctx {
   uint64_t fsbase;
 };
 
-__attribute__((naked, unused)) static void fork_iretq(struct fork_ctx *ctx) {
+__attribute__((naked, unused)) static void fork_iretq( __attribute__((unused)) struct fork_ctx *ctx) {
   __asm__ volatile("mov %rdi, %r15 \n\t"
                    "mov 120(%r15), %r8 \n\t"
                    "mov 128(%r15), %r9 \n\t"
@@ -1691,7 +1691,7 @@ static int64_t sys_ioctl(int fd, unsigned long req, void *arg) {
         
       case TIOCGPGRP:
         if (arg && access_ok(arg, sizeof(int))) {
-          *(int *)arg = tty->pgrp ? tty->pgrp : current->pid;
+          *(int *)arg = tty->pgrp ? tty->pgrp : (int)current->pid;
         }
         return 0;
         
@@ -1740,6 +1740,7 @@ static int64_t sys_ioctl(int fd, unsigned long req, void *arg) {
 }
 
 static int64_t sys_rt_sigaction(int sig, const void *act, void *oact, size_t sz) {
+  (void)sz;
   if (!current) return -ESRCH;
   if (sig < 1 || sig >= 64) return -EINVAL;
   if (sig == SIGKILL || sig == SIGSTOP) return -EINVAL;
@@ -1757,6 +1758,7 @@ static int64_t sys_rt_sigaction(int sig, const void *act, void *oact, size_t sz)
   return 0;
 }
 static int64_t sys_rt_sigprocmask(int how, const void *set, void *oldset, size_t sz) {
+  (void)sz;
   if (!current) return -ESRCH;
 
   if (oldset && access_ok(oldset, sizeof(uint64_t))) {
@@ -1818,7 +1820,7 @@ static int64_t sys_rt_sigreturn(struct pt_regs *r) {
   return 0;
 }
 
-static int64_t sys_sigaltstack(const void *ss, void *old_ss) {
+__attribute__((unused)) static int64_t sys_sigaltstack(const void *ss, void *old_ss) {
   (void)ss;
   (void)old_ss;
   return 0;
@@ -1895,7 +1897,7 @@ static int64_t sys_rename(const char *oldpath, const char *newpath) {
         if (ret != -EXDEV && ret != -ENOSYS) return ret;
     }
 
-fallback_copy_delete:
+fallback_copy_delete: {
     struct fs_file f_old, f_new;
     if (vfs_open(old_res, &f_old) != 0) return -ENOENT;
     
@@ -1919,6 +1921,7 @@ fallback_copy_delete:
     vfs_unlink(old_res);
 
     return 0;
+}
 }
 
 static int64_t sys_renameat(int olddfd, const char *oldpath, int newdfd, const char *newpath) {

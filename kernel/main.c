@@ -49,7 +49,7 @@ extern void put_u64(uint64_t v);
 #ifdef CONFIG_RUN_INIT
 static void init_thread(void *arg) {
   (void)arg;
-  int rc = execve(CONFIG_INIT_PATH, 0, 0);
+  execve(CONFIG_INIT_PATH, 0, 0);
   for (;;)
     __asm__ volatile("sti; hlt");
 }
@@ -98,7 +98,7 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   vm_sanitize_boot_cr3();
 #endif
 #endif
-  struct multiboot_info *mbi = (struct multiboot_info *)mboot_ptr;
+  struct multiboot_info *mbi = (struct multiboot_info *)(uint64_t)mboot_ptr;
   if (mbi->flags & (1 << 12)) {
     con_puts("[VESA] Framebuffer detected!\n");
     con_puts("[VESA] Resolution: ");

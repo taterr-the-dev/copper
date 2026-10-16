@@ -64,8 +64,6 @@ int ext_read_inode(struct ext_sb *s, uint32_t ino, uint8_t *raw)
 
     uint64_t offset = (uint64_t)itbl * s->bs + (uint64_t)idx * s->inode_size;
     int res = rb(s, offset, raw, s->inode_size);
-    uint16_t mode = raw[0] | (raw[1] << 8);
-    uint32_t size = raw[4] | (raw[5] << 8) | (raw[6] << 16) | ((uint32_t)raw[7] << 24);
     return res;
 }
 
@@ -79,14 +77,14 @@ int ext_write_inode(struct ext_sb *s, uint32_t ino, const uint8_t *raw)
     return wb(s, (uint64_t)itbl * s->bs + (uint64_t)idx * s->inode_size, raw, s->inode_size);
 }
 
-static int bit_get(struct ext_sb *s, uint32_t bmp_blk, uint32_t bit)
+__attribute__((unused)) static int bit_get(struct ext_sb *s, uint32_t bmp_blk, uint32_t bit)
 {
     uint8_t b;
     rb(s, (uint64_t)bmp_blk * s->bs + bit / 8, &b, 1);
     return (b >> (bit & 7)) & 1;
 }
 
-static void bit_set(struct ext_sb *s, uint32_t bmp_blk, uint32_t bit)
+__attribute__((unused)) static void bit_set(struct ext_sb *s, uint32_t bmp_blk, uint32_t bit)
 {
     uint8_t b;
     rb(s, (uint64_t)bmp_blk * s->bs + bit / 8, &b, 1);

@@ -164,7 +164,7 @@ uint64_t *vm_clone_as(uint64_t *src) {
   return p4;
 }
 
-static inline int is_canonical(uint64_t addr) {
+__attribute__((unused)) static inline int is_canonical(uint64_t addr) {
   return (addr >> 47) == 0 || (addr >> 47) == 0x1FFFF;
 }
 

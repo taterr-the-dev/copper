@@ -13,7 +13,7 @@ int acpi_parse_tables(void) {
     con_puts("[ACPI] Parsing ACPI tables...\n");
     
     extern struct acpi_info acpi;
-    for (uint32_t i = 0; i < acpi.cpu_count; i++) {
+    for (int i = 0; i < acpi.cpu_count; i++) {
         struct acpi_device *cpu = kmalloc(sizeof(*cpu));
         if (!cpu) continue;
         
@@ -36,7 +36,7 @@ int acpi_parse_tables(void) {
         acpi_devices = cpu;
     }
     
-    for (uint32_t i = 0; i < acpi.ioapic_count; i++) {
+    for (int i = 0; i < acpi.ioapic_count; i++) {
         struct acpi_device *ioapic = kmalloc(sizeof(*ioapic));
         if (!ioapic) continue;
         

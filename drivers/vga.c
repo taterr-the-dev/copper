@@ -15,7 +15,6 @@
 
 static volatile uint16_t *vga_mem = (volatile uint16_t *)0xB8000;
 static int row = 0, col = 0;
-static const uint8_t COLOR = 0x07;
 
 static void vga_update_cursor(void) {
   uint16_t pos = row * VGA_W + col;
@@ -27,7 +26,6 @@ static void vga_update_cursor(void) {
 
 static uint8_t vga_color = 0x0F;
 static int ansi_state = 0;
-static int ansi_param = 0;
 
 static uint8_t get_ansi_vga_color(int code) {
     switch (code) {

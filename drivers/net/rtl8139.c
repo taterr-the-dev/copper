@@ -57,7 +57,7 @@ void rtl8139_init() {
         io_base = pci_config_read32(bus, slot, 0, 0x10) & 0xFFFC;
         uint16_t cmd = pci_config_read32(bus, slot, 0, 4) & 0xFFFF;
         cmd |= 0x04;
-        outl(0xCF8, (1 << 31) | (bus << 16) | (slot << 11) | 4);
+        outl(0xCF8, (1U << 31) | (bus << 16) | (slot << 11) | 4);
         outw(0xCFC, cmd);
 
         for (int i = 0; i < 6; i++)

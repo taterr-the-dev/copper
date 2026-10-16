@@ -26,7 +26,6 @@ static uint32_t __attribute__((aligned(4096))) uhci_frame_list[1024];
 static void uhci_write16(uint16_t base, uint8_t offset, uint16_t val) { outw(base + offset, val); }
 static uint16_t uhci_read16(uint16_t base, uint8_t offset) { return inw(base + offset); }
 static void uhci_write32(uint16_t base, uint8_t offset, uint32_t val) { outl(base + offset, val); }
-static uint32_t uhci_read32(uint16_t base, uint8_t offset) { return inl(base + offset); }
 
 uint64_t virt_to_phys(uint64_t addr) {
   if (addr >= 0xFFFF800000000000ULL) {
@@ -63,6 +62,7 @@ static struct usb_setup_packet __attribute__((aligned(16))) static_setup;
 static uint8_t __attribute__((aligned(16))) static_desc_buf[32];
 
 int uhci_control_transfer(uint16_t io_base, uint8_t addr, struct usb_setup_packet *setup, void *data_buf, uint16_t data_len, int is_low_speed) {
+  (void)io_base;
   uint64_t p_setup = virt_to_phys((uint64_t)setup);
   uint64_t p_data = virt_to_phys((uint64_t)data_buf);
   uint64_t p_td_setup = virt_to_phys((uint64_t)&uhci_td_setup);

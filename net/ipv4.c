@@ -159,7 +159,7 @@ void netif_rx_packet(uint8_t *pkt, int len) {
       uint16_t dst_port = (udp[2] << 8) | udp[3];
       uint16_t udp_len = (udp[4] << 8) | udp[5];
 
-      if (udp_len < 8 || udp_len > 4096) {
+      if (udp_len < 8 || udp_len > 1508) {
         return;
       }
 
