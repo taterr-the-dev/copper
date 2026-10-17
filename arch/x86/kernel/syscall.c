@@ -704,21 +704,29 @@ static int64_t sys_fcntl(int fd, int cmd, uint64_t arg) {
 
 static int64_t sys_mount(const char *source, const char *target,
                          const char *fstype) {
-  (void)source;
-  (void)fstype;
-  struct blkdev *dev = blkdev_get(0);
-  if (!dev)
-    return -ENODEV;
-  extern int fs_try_mount(struct blkdev * d, struct fs_ops * *out_ops,
-                          void **out_sb);
-  struct fs_ops *ops = NULL;
-  void *sb = NULL;
-  if (fs_try_mount(dev, &ops, &sb) != 0) {
-    return -EINVAL;
-  }
-  return vfs_mount_at(target, ops, sb);
-}
+    (void)fstype;
+    if (!source || !target) return -EFAULT;
 
+    const char *dev_name = source;
+    if (strncmp(source, "/dev/", 5) == 0) {
+        dev_name = source + 5;
+    } else if (strncmp(source, "/dev", 4) == 0) {
+        dev_name = source + 4;
+    }
+    struct blkdev *dev = blkdev_by_name(dev_name);
+    if (!dev)
+        return -ENODEV;
+
+    extern int fs_try_mount(struct blkdev *d, struct fs_ops **out_ops, void **out_sb);
+    struct fs_ops *ops = NULL;
+    void *sb = NULL;
+
+    if (fs_try_mount(dev, &ops, &sb) != 0) {
+        return -EINVAL;
+    }
+
+    return vfs_mount_at(target, ops, sb);
+}
 static int64_t sys_umount(const char *target) { return vfs_umount(target); }
 
 static int64_t sys_unlink(const char *path) {
