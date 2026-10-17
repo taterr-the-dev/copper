@@ -16,7 +16,7 @@ endif
 
 ARCH ?= $(DETECTED_ARCH)
 
-CC=gcc
+CC=clang
 AS=as
 LD=ld
 
