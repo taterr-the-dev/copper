@@ -8,6 +8,7 @@ struct blkdev {
     int (*read)(struct blkdev *, uint64_t, void *, size_t);
     int (*write)(struct blkdev *, uint64_t, const void *, size_t);
     void *priv;
+    int is_partition;
 };
 int blkdev_register(struct blkdev *);
 struct blkdev *blkdev_by_name(const char *);

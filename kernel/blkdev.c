@@ -39,39 +39,41 @@ static int part_write(struct blkdev *d, uint64_t off, const void *buf,
 }
 
 void blkdev_scan_partitions(struct blkdev *d) {
-  uint8_t mbr[512];
-  if (d->read(d, 0, mbr, 512))
-    return;
-  if (mbr[510] != 0x55 || mbr[511] != 0xAA)
-    return;
-  for (int i = 0; i < 4; i++) {
-    uint8_t *e = mbr + 446 + i * 16;
-    uint8_t type = e[4];
-    if (type == 0 || type == 0xEE || type == 0x05 || type == 0x0F)
-      continue;
-    uint32_t start = *(uint32_t *)(e + 8), size = *(uint32_t *)(e + 12);
-    if (!start || !size || npart >= 8)
-      continue;
-    parts[npart].parent = d;
-    parts[npart].off = (uint64_t)start * 512;
-    int L = 0;
-    const char *s = d->name;
-    while (*s) {
-      pnames[npart][L++] = *s++;
+    uint8_t mbr[512];
+    if (d->read(d, 0, mbr, 512)) return;
+    if (mbr[510] != 0x55 || mbr[511] != 0xAA) return;
+
+    for (int i = 0; i < 4; i++) {
+        uint8_t *e = mbr + 446 + i * 16;
+        uint8_t type = e[4];
+
+        if (type == 0) continue;
+        if (type == 0xEE || type == 0x05 || type == 0x0F) continue;
+
+        uint32_t start = *(uint32_t *)(e + 8);
+        uint32_t size = *(uint32_t *)(e + 12);
+
+        if (!start || !size || npart >= 8) continue;
+        int L = 0;
+        const char *s = d->name;
+        while (*s) pnames[npart][L++] = *s++;
+        pnames[npart][L++] = 'p';
+        pnames[npart][L++] = '1' + i;
+        pnames[npart][L] = 0;
+        if (blkdev_by_name(pnames[npart])) continue;
+
+        parts[npart].parent = d;
+        parts[npart].off = (uint64_t)start * 512;
+
+        pdevs[npart].name = pnames[npart];
+        pdevs[npart].block_size = 512;
+        pdevs[npart].read = part_read;
+        pdevs[npart].write = part_write;
+        pdevs[npart].priv = &parts[npart];
+        pdevs[npart].size = (uint64_t)size * 512;
+        pdevs[npart].is_partition = 1;
+
+        blkdev_register(&pdevs[npart]);
+        npart++;
     }
-    pnames[npart][L++] = 'p';
-    pnames[npart][L++] = '1' + i;
-    pnames[npart][L] = 0;
-    pdevs[npart].name = pnames[npart];
-    pdevs[npart].block_size = 512;
-    pdevs[npart].read = part_read;
-    pdevs[npart].write = part_write;
-    pdevs[npart].priv = &parts[npart];
-    pdevs[npart].size = (uint64_t)size * 512;
-    blkdev_register(&pdevs[npart]);
-    con_puts("[BLK] partition ");
-    con_puts(pnames[npart]);
-    con_puts("\n");
-    npart++;
-  }
 }
