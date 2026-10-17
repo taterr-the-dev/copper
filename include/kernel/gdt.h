@@ -4,6 +4,7 @@
 #include <kernel/types.h>
 
 void gdt_init(void);
+void gdt_init_cpu(uint32_t cpu_id);
+void gdt_set_kernel_stack(uint64_t rsp0);
 
 #endif
-void gdt_set_kernel_stack(uint64_t rsp0);
