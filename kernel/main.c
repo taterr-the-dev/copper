@@ -76,6 +76,8 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   arch_init_fpu();
   con_puts("[OK] GDT initialized.\n");
   idt_init();
+  extern void percpu_init_bsp(void);
+  percpu_init_bsp();
 #ifdef CONFIG_KMALLOC
   kmalloc_init();
 #ifdef CONFIG_VM
@@ -98,6 +100,8 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   vm_sanitize_boot_cr3();
 #endif
 #endif
+  acpi_init();
+  acpi_bus_init();
   struct multiboot_info *mbi = (struct multiboot_info *)(uint64_t)mboot_ptr;
   if (mbi->flags & (1 << 12)) {
     con_puts("[VESA] Framebuffer detected!\n");
@@ -225,6 +229,8 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   pic_clear_mask(15);
   con_puts("[OK] Interrupts enabled.\n");
   arch_sti();
+  extern void acpi_enable_power_button(void);
+  acpi_enable_power_button();
 #endif
 
 #ifdef CONFIG_KMALLOC
@@ -310,8 +316,6 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
     con_puts("[PCI-RAMDISK] PCI RAM disk ready\n");
   }
 #endif
-	acpi_init();
-	acpi_bus_init();
 	pci_init();
 #ifdef CONFIG_SCHED
   scheduler_init();

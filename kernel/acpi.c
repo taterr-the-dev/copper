@@ -155,7 +155,6 @@ void acpi_init(void) {
     put_u64(acpi.ioapic_count);
     con_puts(" I/O APIC(s)\n");
     acpi.initialized = 1;
-		acpi_enable_power_button();
 }
 
 struct acpi_sdt_header *acpi_find_table(const char *signature) {

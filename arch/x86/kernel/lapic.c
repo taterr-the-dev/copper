@@ -4,6 +4,7 @@
 #include <kernel/vm.h>
 #include <kernel/pmm.h>
 #include <kernel/io.h>
+#include <kernel/acpi.h>
 
 #define LAPIC_BASE_MSR 0x1B
 #define LAPIC_BASE_ADDR 0xFEE00000ULL
@@ -34,21 +35,22 @@ static inline void lapic_write(uint32_t reg, uint32_t val) {
 }
 
 void lapic_init(void) {
-  uint64_t apic_base = rdmsr(LAPIC_BASE_MSR);
-  apic_base |= (1ULL << 11);
-  wrmsr(LAPIC_BASE_MSR, apic_base);
-  vm_map((uint64_t *)boot_cr3, LAPIC_BASE_ADDR, LAPIC_BASE_ADDR, 0x1B);
-  uint64_t cr3;
-  __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
-  __asm__ volatile("mov %0, %%cr3" :: "r"(cr3) : "memory");
-  lapic = (volatile uint32_t *)LAPIC_BASE_ADDR;
-  uint32_t spurious = lapic_read(LAPIC_SPURIOUS);
-  spurious |= (1 << 8);
-  spurious |= 0xFF;
-  lapic_write(LAPIC_SPURIOUS, spurious);
-  lapic_write(LAPIC_LVT_LINT0, 0x700);
-  lapic_write(LAPIC_LVT_LINT1, 0x10000);
-  con_puts("[LAPIC] Initialized and enabled.\n");
+    uint64_t apic_base = rdmsr(LAPIC_BASE_MSR);
+    apic_base |= (1ULL << 11);
+    wrmsr(LAPIC_BASE_MSR, apic_base);
+    uint64_t lapic_phys = acpi.lapic_address ? acpi.lapic_address : LAPIC_BASE_ADDR;
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    vm_map((uint64_t *)(cr3 & ~0xFFF), lapic_phys, lapic_phys, 0x1B);
+    __asm__ volatile("mov %0, %%cr3" :: "r"(cr3) : "memory");
+    lapic = (volatile uint32_t *)lapic_phys;
+    uint32_t spurious = lapic_read(LAPIC_SPURIOUS);
+    spurious |= (1 << 8);
+    spurious |= 0xFF;
+    lapic_write(LAPIC_SPURIOUS, spurious);
+    lapic_write(LAPIC_LVT_LINT0, 0x700);
+    lapic_write(LAPIC_LVT_LINT1, 0x10000);
+    con_puts("[LAPIC] Initialized and enabled.\n");
 }
 
 void lapic_timer_init(void) {
