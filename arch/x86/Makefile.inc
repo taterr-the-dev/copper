@@ -1,7 +1,8 @@
 SFILES += arch/x86/boot.s \
           arch/x86/isr.s \
           arch/x86/switch.s \
-          arch/x86/syscall.s
+          arch/x86/syscall.s \
+          arch/x86/smp_trampoline.s
 
 CFILES += arch/x86/kernel/syscall.c \
           arch/x86/kernel/vm.c \
@@ -19,6 +20,7 @@ CFILES += arch/x86/kernel/syscall.c \
           arch/x86/kernel/acpi_arch.c \
           arch/x86/kernel/pci.c \
           arch/x86/kernel/percpu.c \
+          arch/x86/kernel/smp.c \
           arch/x86/kernel/arch.c
 
 ifeq ($(CONFIG_LAPIC),y)

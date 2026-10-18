@@ -317,6 +317,8 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
   }
 #endif
 	pci_init();
+    extern void smp_init(void);
+    smp_init();
 #ifdef CONFIG_SCHED
   scheduler_init();
   extern void demo_a(void *), demo_b(void *);

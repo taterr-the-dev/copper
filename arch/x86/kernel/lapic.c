@@ -24,7 +24,7 @@
 
 extern void put_u64(uint64_t v);
 
-static volatile uint32_t *lapic = NULL;
+volatile uint32_t *lapic = NULL;
 
 static inline uint32_t lapic_read(uint32_t reg) {
   return lapic[reg >> 2];

@@ -77,3 +77,8 @@ void gdt_set_kernel_stack(uint64_t rsp0) {
         my_tss->rsp0 = rsp0;
     }
 }
+
+uint64_t gdt_get_ap_stack(uint32_t cpu_id) {
+    if (cpu_id >= 16) return 0;
+    return (uint64_t)&percpu_int_stack[cpu_id][16384];
+}
