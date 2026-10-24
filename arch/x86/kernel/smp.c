@@ -12,8 +12,8 @@ extern char off_stack[];
 extern char off_cr3[];
 extern void put_u64(uint64_t v);
 extern volatile uint32_t *lapic;
+
 #define TRAMP_PHYS 0x7000ULL
-#define MARKER     0x7FF0
 
 volatile uint32_t ap_started = 0;
 
@@ -25,27 +25,38 @@ static void lap_wait(void) {
         if (!(lap_read(0x300) & (1 << 12))) return;
 }
 
-void smp_ap_c_entry(uint32_t cpu_id) {
-    __asm__ volatile("cli");
-    *(volatile uint32_t *)MARKER = 0x1000000A;
-    ap_started = cpu_id;
-    for (;;) __asm__ volatile("hlt");
+static void ap_lapic_init(void) {
+    lap_write(0xF0, 0x1FF);
+    lap_write(0x320, 0x10000);
+    lap_write(0x330, 0x10000);
+    lap_write(0x340, 0x10000);
+    lap_write(0x350, 0x10000);
+    lap_write(0x360, 0x10000);
+    lap_write(0x370, 0x10000);
+    lap_write(0x80, 0);
 }
 
-static void report(uint32_t m) {
-    switch (m) {
-        case 0x10000001: con_puts("[SMP] died in lgdt/lidt\n"); break;
-        case 0x10000002: con_puts("[SMP] died at CR0.PE\n"); break;
-        case 0x10000003: con_puts("[SMP] died in real->32 far jump\n"); break;
-        case 0x10000004: con_puts("[SMP] died in 32-bit segs / CR4 / temp CR3\n"); break;
-        case 0x10000005: con_puts("[SMP] died at EFER\n"); break;
-        case 0x10000006: con_puts("[SMP] died at CR0.PG\n"); break;
-        case 0x10000007: con_puts("[SMP] died in 32->64 far jump\n"); break;
-        case 0x10000008: con_puts("[SMP] died reading cpu_id / stack / cr3\n"); break;
-        case 0x10000009: con_puts("[SMP] died at kernel CR3 switch or C entry\n"); break;
-        case 0x1000000A: con_puts("[SMP] SUCCESS AP is in C!\n"); break;
-        default:         con_puts("[SMP] AP never started\n"); break;
+void smp_ap_c_entry(uint32_t cpu_id) {
+    __asm__ volatile("cli");
+    extern void gdt_init_cpu(uint32_t cpu_id);
+    extern void idt_init(void);
+    gdt_init_cpu(cpu_id);
+    idt_init();
+    ap_lapic_init();
+    extern struct percpu *percpu_get_area(uint32_t cpu_id);
+    struct percpu *my_percpu = percpu_get_area(cpu_id);
+    if (my_percpu) {
+        uint64_t gs_base = (uint64_t)my_percpu + 0xFFFF800000000000ULL;
+        uint32_t lo = (uint32_t)(gs_base & 0xFFFFFFFF);
+        uint32_t hi = (uint32_t)(gs_base >> 32);
+        __asm__ volatile("wrmsr" :: "c"(0xC0000101), "a"(lo), "d"(hi));
     }
+    con_puts("[SMP] CPU ");
+    put_u64(cpu_id);
+    con_puts(" online.\n");
+    ap_started = cpu_id;
+    __asm__ volatile("sti");
+    for (;;) __asm__ volatile("hlt");
 }
 
 void smp_init(void) {
@@ -61,32 +72,22 @@ void smp_init(void) {
     pml4[0] = 0x9000 | 3;
     pdpt[0] = 0xA000 | 3;
     pd[0]   = 0x0000 | 0x83;
-
     uint64_t kcr3;
     __asm__ volatile("mov %%cr3, %0" : "=r"(kcr3));
-
     for (uint32_t i = 1; i < (uint32_t)acpi.cpu_count; i++) {
         uint32_t apic = acpi.cpu_apic_ids[i];
-
-        con_puts("[SMP] Waking CPU "); put_u64(i);
-        con_puts(" (APIC "); put_u64(apic); con_puts(")\n");
-
         *(volatile uint32_t *)(TRAMP_PHYS + (uintptr_t)off_cpu_id) = i;
         *(volatile uint64_t *)(TRAMP_PHYS + (uintptr_t)off_stack)  = gdt_get_ap_stack(i);
         *(volatile uint64_t *)(TRAMP_PHYS + (uintptr_t)off_cr3)    = kcr3;
-        *(volatile uint32_t *)MARKER = 0;
         ap_started = 0;
-
         lap_write(0x310, apic << 24);
         lap_write(0x300, 0x00004500);
         lap_wait();
         for (volatile int j = 0; j < 1000000; j++);
-
         lap_write(0x310, apic << 24);
         lap_write(0x300, 0x00008500);
         lap_wait();
         for (volatile int j = 0; j < 1000000; j++);
-
         for (int s = 0; s < 2; s++) {
             lap_write(0x310, apic << 24);
             lap_write(0x300, 0x00000607);
@@ -97,7 +98,11 @@ void smp_init(void) {
         for (volatile int j = 0; j < 50000000; j++)
             if (ap_started == i) break;
 
-        report(*(volatile uint32_t *)MARKER);
+        if (ap_started != i) {
+                con_puts("[SMP] Failed to start CPU ");
+                put_u64(i);
+                con_puts("\n");
+            }
     }
     con_puts("[SMP] done.\n");
 }
