@@ -2,8 +2,10 @@
 #ifdef CONFIG_KMALLOC
 #include <kernel/kmalloc.h>
 #include <kernel/string.h>
+#include <kernel/spinlock.h>
 #define HEAP_SIZE (8 * 1024 * 1024)
 static uint8_t heap[HEAP_SIZE];
+static spinlock_t kmalloc_lock = SPINLOCK_INIT;
 struct hdr {
   uint32_t size;
   uint32_t free;
@@ -15,9 +17,12 @@ void kmalloc_init(void) {
   fl->size = HEAP_SIZE - sizeof(struct hdr);
   fl->free = 1;
   fl->next = 0;
+  spinlock_init(&kmalloc_lock);
 }
 void *kmalloc(size_t n) {
   n = (n + 7) & ~7UL;
+  uint64_t flags;
+  spin_lock_irqsave(&kmalloc_lock, &flags);
   for (struct hdr *h = fl; h; h = h->next) {
     if (h->free && h->size >= n) {
       if (h->size >= n + sizeof(struct hdr) + 8) {
@@ -30,6 +35,7 @@ void *kmalloc(size_t n) {
       }
       h->free = 0;
 	  memset(h + 1, 0, n);
+      spin_unlock_irqrestore(&kmalloc_lock, flags);
       return (void *)(h + 1);
     }
   }
@@ -43,6 +49,8 @@ void *kmalloc(size_t n) {
 void kfree(void *p) {
   if (!p)
     return;
+  uint64_t flags;
+  spin_lock_irqsave(&kmalloc_lock, &flags);
   struct hdr *h = ((struct hdr *)p) - 1;
   h->free = 1;
   for (struct hdr *c = fl; c; c = c->next) {
@@ -52,5 +60,6 @@ void kfree(void *p) {
       c->next = c->next->next;
     }
   }
+  spin_unlock_irqrestore(&kmalloc_lock, flags);
 }
 #endif
