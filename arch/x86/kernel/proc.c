@@ -16,6 +16,7 @@ extern void hex64(uint64_t v);
 extern uint8_t stack_top[];
 extern void context_switch(struct task *, struct task *);
 struct task *current = 0;
+spinlock_t sched_lock __attribute__((aligned(64))) = SPINLOCK_INIT;
 static struct task idle_task;
 static uint32_t next_pid = 1;
 
@@ -55,22 +56,24 @@ int kthread_create(void (*fn)(void *), void *arg, const char *name) {
   t->parent = current;
   t->fsbase = current ? current->fsbase : 0;
   t->exit_code = 0;
-  t->pid = next_pid++;
   t->state = 2;
   t->fn = fn;
   t->arg = arg;
   memcpy(t->name, name, 15);
   uint64_t flags;
-  __asm__ volatile("pushfq; pop %0" : "=r"(flags));
-  __asm__ volatile("cli");
+  spin_lock_irqsave(&sched_lock, &flags);
+  int pid = next_pid++;
+  t->pid = pid;
   t->next = current->next;
   current->next = t;
-  __asm__ volatile("push %0; popfq" ::"r"(flags));
-  return t->pid;
+  spin_unlock_irqrestore(&sched_lock, flags);
+  return pid;
 }
 void schedule(void) {
   if (!current)
     return;
+  uint64_t flags;
+  spin_lock_irqsave(&sched_lock, &flags);
   struct task *start = current->next, *n = start, *best = 0;
   do {
     if (n != current && (n->state == T_READY || n->state == T_RUN)) {
@@ -96,8 +99,12 @@ void schedule(void) {
                      "d"((uint32_t)(best->fsbase >> 32)));
     struct task *p = current;
     current = best;
+    spin_unlock(&sched_lock);
     context_switch(p, best);
+    irq_restore(flags);
+    return;
   }
+  spin_unlock_irqrestore(&sched_lock, flags);
 }
 void sched_tick(void) {
   if (current)
@@ -109,30 +116,36 @@ void yield(void) {
   __asm__ volatile("sti");
 }
 void kthread_exit(void) {
-  __asm__ volatile("cli");
+  uint64_t flags;
+  spin_lock_irqsave(&sched_lock, &flags);
   struct task *dead = current;
   dead->state = 3;
   struct task *p = dead;
   while (p->next != dead)
     p = p->next;
-  p->next = dead->next;
-  current = dead->next;
-  context_switch(dead, current);
+  struct task *nx = dead->next;
+  p->next = nx;
+  current = nx;
+  spin_unlock(&sched_lock);
+  context_switch(dead, nx);
   for (;;)
     ;
 }
 #endif
 
 void do_exit(int code) {
+  uint64_t flags;
+  spin_lock_irqsave(&sched_lock, &flags);
   current->exit_code = (code & 0xff) << 8;
   current->state = T_DEAD;
 
   if (current->parent) {
-    current->parent->sig_pending |= (1ULL << SIGCHLD);
+    __atomic_fetch_or(&current->parent->sig_pending, 1ULL << SIGCHLD, __ATOMIC_ACQ_REL);
     if (current->parent->state == T_BLOCKED) {
       current->parent->state = T_READY;
     }
   }
+  spin_unlock(&sched_lock);
 
   for (;;) {
     yield();
@@ -140,7 +153,8 @@ void do_exit(int code) {
 }
 
 int wait4(int pid, int *status) {
-  __asm__ volatile("cli");
+  uint64_t flags;
+  spin_lock_irqsave(&sched_lock, &flags);
   for (;;) {
     int any = 0;
     struct task *t = current->next, *start = t;
@@ -153,6 +167,7 @@ int wait4(int pid, int *status) {
             p = p->next;
           p->next = t->next;
           int rpid = t->pid, code = t->exit_code;
+          spin_unlock_irqrestore(&sched_lock, flags);
           kfree(t->stack);
           kfree(t);
           if (status)
@@ -163,25 +178,33 @@ int wait4(int pid, int *status) {
       t = t->next;
     } while (t != start);
     if (!any) {
+      spin_unlock_irqrestore(&sched_lock, flags);
       return -10;
     }
     current->state = T_BLOCKED;
+    spin_unlock(&sched_lock);
     schedule();
+    spin_lock(&sched_lock);
   }
 }
 
 int futex_wait(uint64_t *u, int64_t val) {
-  __asm__ volatile("cli");
+  uint64_t flags;
+  spin_lock_irqsave(&sched_lock, &flags);
   if (*u != (uint64_t)val) {
+    spin_unlock_irqrestore(&sched_lock, flags);
     return -11;
   }
   current->futex_addr = (uint64_t)u;
   current->state = T_BLOCKED;
+  spin_unlock(&sched_lock);
   schedule();
+  irq_restore(flags);
   return 0;
 }
 int futex_wake(uint64_t *u, int n) {
-  __asm__ volatile("cli");
+  uint64_t flags;
+  spin_lock_irqsave(&sched_lock, &flags);
   int woken = 0;
   struct task *t = current->next, *start = t;
   do {
@@ -193,6 +216,7 @@ int futex_wake(uint64_t *u, int n) {
     }
     t = t->next;
   } while (t != start);
+  spin_unlock(&sched_lock);
   __asm__ volatile("sti");
   return woken;
 }
@@ -210,31 +234,53 @@ void alloc_fresh_stack(struct task *t) {
 }
 
 void kill_current(int sig) {
+  uint64_t flags;
+  spin_lock_irqsave(&sched_lock, &flags);
   current->exit_code = sig & 0x7f;
   current->state = T_DEAD;
   
   if (current->parent && current->parent->state == T_BLOCKED) {
     current->parent->state = T_READY;
   }
+  spin_unlock(&sched_lock);
 
   for (;;) {
     yield();
   }
 }
 void send_signal(int pid, int sig) {
+  uint64_t flags;
+  spin_lock_irqsave(&sched_lock, &flags);
   struct task *t = current ? current->next : NULL;
-  if (!t) return;
-  struct task *start = t;
-  do {
-    if ((int)t->pid == pid) {
-      t->sig_pending |= (1ULL << sig);
-      if (t->state == T_BLOCKED) {
-        t->state = T_READY;
+  if (t) {
+    struct task *start = t;
+    do {
+      if ((int)t->pid == pid) {
+        __atomic_fetch_or(&t->sig_pending, 1ULL << sig, __ATOMIC_ACQ_REL);
+        if (t->state == T_BLOCKED) {
+          t->state = T_READY;
+        }
+        break;
       }
-      return;
-    }
-    t = t->next;
-  } while (t != start);
+      t = t->next;
+    } while (t != start);
+  }
+  spin_unlock_irqrestore(&sched_lock, flags);
+}
+
+static void task_set_state(struct task *t, int st) {
+  uint64_t flags;
+  spin_lock_irqsave(&sched_lock, &flags);
+  t->state = st;
+  spin_unlock_irqrestore(&sched_lock, flags);
+}
+
+static void task_wake_if_blocked(struct task *t) {
+  uint64_t flags;
+  spin_lock_irqsave(&sched_lock, &flags);
+  if (t && t->state == T_BLOCKED)
+    t->state = T_READY;
+  spin_unlock_irqrestore(&sched_lock, flags);
 }
 
 void deliver_signals(struct int_frame *f) {
@@ -245,7 +291,7 @@ void deliver_signals(struct int_frame *f) {
     if (!(current->sig_pending & (1ULL << sig))) continue;
     if (current->sig_mask & (1ULL << sig)) continue;
 
-    current->sig_pending &= ~(1ULL << sig);
+    __atomic_fetch_and(&current->sig_pending, ~(1ULL << sig), __ATOMIC_ACQ_REL);
     uint64_t handler = current->sig_handlers[sig];
 
     if (handler == SIG_IGN) continue;
@@ -258,18 +304,16 @@ void deliver_signals(struct int_frame *f) {
           continue;
         case SIGSTOP:
         case SIGTSTP:
-          current->state = T_BLOCKED;
+          task_set_state(current, T_BLOCKED);
           yield();
           continue;
         case SIGCONT:
-          if (current->state == T_BLOCKED)
-            current->state = T_READY;
+          task_wake_if_blocked(current);
           continue;
         default:
           current->exit_code = 128 + sig;
-          current->state = T_DEAD;
-          if (current->parent && current->parent->state == T_BLOCKED)
-            current->parent->state = T_READY;
+          task_set_state(current, T_DEAD);
+          task_wake_if_blocked(current->parent);
           schedule();
           return;
       }

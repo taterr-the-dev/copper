@@ -1,6 +1,7 @@
 #ifndef _KERNEL_PROC_H
 #define _KERNEL_PROC_H
 #include <kernel/types.h>
+#include <kernel/spinlock.h>
 #define TASK_STACK 65536
 #define USTACK_VA 0x0000700000000000ULL
 #define USTACK_NP 512
@@ -104,6 +105,7 @@ struct int_frame;
 
 void send_signal(int pid, int sig);
 void deliver_signals(struct int_frame *f);
+extern spinlock_t sched_lock;
 #endif
 void enter_usermode(uint64_t entry, uint64_t user_rsp);
 int execve(const char *path, char *const *argv, char *const *envp);

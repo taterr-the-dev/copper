@@ -3,6 +3,7 @@
 #include <kernel/kmalloc.h>
 #include <kernel/string.h>
 #include <kernel/types.h>
+#include <kernel/spinlock.h>
 
 #ifdef CONFIG_NET
 extern void put_u64(uint64_t v);
@@ -19,6 +20,7 @@ struct udp_packet {
   uint8_t data[1500];
   struct udp_packet *next;
 };
+DEFINE_SPINLOCK(udp_lock);
 static struct udp_packet *udp_queue_head = NULL;
 static struct udp_packet *udp_queue_tail = NULL;
 
@@ -170,6 +172,8 @@ void netif_rx_packet(uint8_t *pkt, int len) {
       static struct udp_packet udp_pool[MAX_UDP_PACKETS];
       static int udp_pool_idx = 0;
 
+      uint64_t uflags;
+      spin_lock_irqsave(&udp_lock, &uflags);
       struct udp_packet *p = &udp_pool[udp_pool_idx];
       udp_pool_idx = (udp_pool_idx + 1) % MAX_UDP_PACKETS;
 
@@ -185,6 +189,7 @@ void netif_rx_packet(uint8_t *pkt, int len) {
       else
         udp_queue_tail->next = p;
       udp_queue_tail = p;
+      spin_unlock_irqrestore(&udp_lock, uflags);
 
     } else if (proto == 6) {
       uint16_t ip_total_len = (pkt[16] << 8) | pkt[17];
@@ -257,6 +262,8 @@ int net_send_udp(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
 
 struct udp_packet *net_recv_udp(uint16_t port) {
   struct udp_packet *prev = NULL;
+  uint64_t flags;
+  spin_lock_irqsave(&udp_lock, &flags);
   struct udp_packet *curr = udp_queue_head;
 
   while (curr) {
@@ -269,12 +276,13 @@ struct udp_packet *net_recv_udp(uint16_t port) {
       if (!curr->next) {
         udp_queue_tail = prev;
       }
-      return curr;
+      break;
     }
     prev = curr;
     curr = curr->next;
   }
-  return NULL;
+  spin_unlock_irqrestore(&udp_lock, flags);
+  return curr;
 }
 
 void net_init() {

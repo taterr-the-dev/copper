@@ -92,7 +92,7 @@ __attribute__((unused)) static void bit_set(struct ext_sb *s, uint32_t bmp_blk, 
     wb(s, (uint64_t)bmp_blk * s->bs + bit / 8, &b, 1);
 }
 
-uint32_t ext_alloc_block(struct ext_sb *s)
+static uint32_t ext_alloc_block_nolock(struct ext_sb *s)
 {
     uint32_t num_groups = (s->blocks + s->bpg - 1) / s->bpg;
     uint8_t bgd[64];
@@ -137,7 +137,7 @@ uint32_t ext_alloc_block(struct ext_sb *s)
     return 0;
 }
 
-uint32_t ext_alloc_inode(struct ext_sb *s)
+static uint32_t ext_alloc_inode_nolock(struct ext_sb *s)
 {
     uint32_t num_groups = (s->inodes + s->ipg - 1) / s->ipg;
     uint8_t bgd[64];
@@ -178,7 +178,7 @@ uint32_t ext_alloc_inode(struct ext_sb *s)
     return 0;
 }
 
-void ext_free_inode(struct ext_sb *s, uint32_t ino) {
+static void ext_free_inode_nolock(struct ext_sb *s, uint32_t ino) {
     uint32_t g = (ino - 1) / s->ipg, idx = (ino - 1) % s->ipg;
     uint8_t bgd[64];
     uint32_t read_sz = s->desc_size > 64 ? 64 : s->desc_size;
@@ -199,6 +199,32 @@ void ext_free_inode(struct ext_sb *s, uint32_t ino) {
     wb(s, (uint64_t)s->bgdt_block * s->bs + (uint64_t)g * s->desc_size, bgd, read_sz);
 }
 
+uint32_t ext_alloc_block(struct ext_sb *s)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&s->lock, &flags);
+    uint32_t r = ext_alloc_block_nolock(s);
+    spin_unlock_irqrestore(&s->lock, flags);
+    return r;
+}
+
+uint32_t ext_alloc_inode(struct ext_sb *s)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&s->lock, &flags);
+    uint32_t r = ext_alloc_inode_nolock(s);
+    spin_unlock_irqrestore(&s->lock, flags);
+    return r;
+}
+
+void ext_free_inode(struct ext_sb *s, uint32_t ino)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&s->lock, &flags);
+    ext_free_inode_nolock(s, ino);
+    spin_unlock_irqrestore(&s->lock, flags);
+}
+
 int ext_init_sb(struct blkdev *dev, void **sbp)
 {
     uint8_t sb[1024];
@@ -214,6 +240,7 @@ int ext_init_sb(struct blkdev *dev, void **sbp)
         return -1;
 
     st->dev = dev;
+    spinlock_init(&st->lock);
 
     uint32_t log = sb[0x18] | (sb[0x19] << 8) | (sb[0x1A] << 16) | ((uint32_t)sb[0x1B] << 24);
     st->bs = 1024 << log;

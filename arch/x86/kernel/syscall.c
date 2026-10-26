@@ -1954,38 +1954,42 @@ static int64_t sys_reboot(int magic1, int magic2, int cmd, void *arg) {
 int64_t sys_kill(int pid, int sig) {
   if (sig < 0 || sig >= 64) return -EINVAL;
 
+  int64_t ret = -EINVAL;
+  uint64_t flags;
+  spin_lock_irqsave(&sched_lock, &flags);
+
   if (pid > 0) {
+    ret = -ESRCH;
     struct task *t = current->next;
     struct task *start = t;
     do {
       if ((int)t->pid == pid) {
-        t->sig_pending |= (1ULL << sig);
+        __atomic_fetch_or(&t->sig_pending, 1ULL << sig, __ATOMIC_ACQ_REL);
         if (t->state == T_BLOCKED) {
           t->state = T_READY;
         }
-        return 0;
+        ret = 0;
+        break;
       }
       t = t->next;
     } while (t != start);
-    return -ESRCH;
-  }
-
-  if (pid == 0 || pid == -1) {
+  } else if (pid == 0 || pid == -1) {
     struct task *t = current->next;
     struct task *start = t;
     do {
       if (pid == -1 || t->pgrp == current->pgrp) {
-        t->sig_pending |= (1ULL << sig);
+        __atomic_fetch_or(&t->sig_pending, 1ULL << sig, __ATOMIC_ACQ_REL);
         if (t->state == T_BLOCKED) {
           t->state = T_READY;
         }
       }
       t = t->next;
     } while (t != start);
-    return 0;
+    ret = 0;
   }
 
-  return -EINVAL;
+  spin_unlock_irqrestore(&sched_lock, flags);
+  return ret;
 }
 
 int64_t syscall_dispatch(struct pt_regs *r) {

@@ -50,6 +50,7 @@ static void halt_or_reboot(void) {
 }
 void panic(const char *msg) {
 	arch_cli();
+  console_bust_lock();
   con_puts("\n\n");
   con_puts("========================================\n");
   con_puts("***          KERNEL PANIC          ***\n");
@@ -60,6 +61,7 @@ void panic(const char *msg) {
 }
 void panic_frame(struct int_frame *f) {
 	arch_cli();
+  console_bust_lock();
   con_puts("\n\n");
   con_puts("========================================\n");
   con_puts("*** KERNEL PANIC: ");

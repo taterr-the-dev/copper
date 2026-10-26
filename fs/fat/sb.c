@@ -82,7 +82,7 @@ void fat_set_fat(struct fat_sb *s, uint32_t c, uint32_t v)
     }
 }
 
-uint32_t fat_alloc_cl(struct fat_sb *s)
+static uint32_t fat_alloc_cl_nolock(struct fat_sb *s)
 {
     for (uint32_t c = 2; c < s->total_cl + 2; c++) {
         if (fat_next_cl(s, c) == 0) {
@@ -92,6 +92,15 @@ uint32_t fat_alloc_cl(struct fat_sb *s)
         }
     }
     return 0;
+}
+
+uint32_t fat_alloc_cl(struct fat_sb *s)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&s->lock, &flags);
+    uint32_t r = fat_alloc_cl_nolock(s);
+    spin_unlock_irqrestore(&s->lock, flags);
+    return r;
 }
 
 int fat_init_sb(struct blkdev *dev, void **sbp, int force_type)
@@ -107,6 +116,7 @@ int fat_init_sb(struct blkdev *dev, void **sbp, int force_type)
         return -1;
 
     st->dev = dev;
+    spinlock_init(&st->lock);
     st->bps = b[11] | (b[12] << 8);
     st->spc = b[13];
     st->reserved = b[14] | (b[15] << 8);

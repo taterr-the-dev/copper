@@ -5,6 +5,7 @@
 #include <kernel/string.h>
 #include <kernel/console.h>
 #include <kernel/kmalloc.h>
+#include <kernel/spinlock.h>
 
 struct ext_sb {
     struct blkdev *dev;
@@ -16,6 +17,7 @@ struct ext_sb {
     uint32_t inodes;
     uint32_t blocks;
     uint32_t desc_size;
+    spinlock_t lock;
 };
 
 int ext_init_sb(struct blkdev *dev, void **sbp);

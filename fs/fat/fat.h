@@ -4,12 +4,14 @@
 #include <kernel/fs.h>
 #include <kernel/string.h>
 #include <kernel/console.h>
+#include <kernel/spinlock.h>
 #include <kernel/kmalloc.h>
 
 extern uint8_t fat_sec_buf[8192];
 
 struct fat_sb {
     struct blkdev *dev;
+    spinlock_t lock;
     uint32_t bps;
     uint32_t spc;
     uint32_t reserved;

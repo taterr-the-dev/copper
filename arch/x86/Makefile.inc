@@ -21,7 +21,8 @@ CFILES += arch/x86/kernel/syscall.c \
           arch/x86/kernel/pci.c \
           arch/x86/kernel/percpu.c \
           arch/x86/kernel/smp.c \
-          arch/x86/kernel/arch.c
+          arch/x86/kernel/arch.c \
+          arch/x86/kernel/spinlock.c
 
 ifeq ($(CONFIG_LAPIC),y)
     CFILES += arch/x86/kernel/lapic.c

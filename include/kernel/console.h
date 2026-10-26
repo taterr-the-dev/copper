@@ -3,4 +3,5 @@
 void con_init(void);
 void con_putc(char c);
 void con_puts(const char *s);
+void console_bust_lock(void);
 #endif

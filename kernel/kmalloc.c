@@ -5,7 +5,7 @@
 #include <kernel/spinlock.h>
 #define HEAP_SIZE (8 * 1024 * 1024)
 static uint8_t heap[HEAP_SIZE];
-static spinlock_t kmalloc_lock = SPINLOCK_INIT;
+DEFINE_SPINLOCK(kmalloc_lock);
 struct hdr {
   uint32_t size;
   uint32_t free;
@@ -22,6 +22,7 @@ void kmalloc_init(void) {
 void *kmalloc(size_t n) {
   n = (n + 7) & ~7UL;
   uint64_t flags;
+  void *ptr = 0;
   spin_lock_irqsave(&kmalloc_lock, &flags);
   for (struct hdr *h = fl; h; h = h->next) {
     if (h->free && h->size >= n) {
@@ -34,10 +35,14 @@ void *kmalloc(size_t n) {
         h->next = nh;
       }
       h->free = 0;
-	  memset(h + 1, 0, n);
-      spin_unlock_irqrestore(&kmalloc_lock, flags);
-      return (void *)(h + 1);
+      ptr = (void *)(h + 1);
+      break;
     }
+  }
+  spin_unlock_irqrestore(&kmalloc_lock, flags);
+  if (ptr) {
+    memset(ptr, 0, n);
+    return ptr;
   }
   extern void con_puts(const char *s);
   extern void put_u64(uint64_t v);

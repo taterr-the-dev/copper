@@ -382,7 +382,7 @@ static int ext_remove_dirent(struct ext_sb *s, uint32_t dir_ino, const char *nam
     return -1;
 }
 
-void ext_free_block(struct ext_sb *s, uint32_t blk)
+static void ext_free_block_nolock(struct ext_sb *s, uint32_t blk)
 {
     if (!blk)
         return;
@@ -414,6 +414,14 @@ void ext_free_block(struct ext_sb *s, uint32_t blk)
     free_total++;
     *(uint32_t *)(sb_buf + 12) = free_total;
     ext_write_at(s, 1024, sb_buf, 1024);
+}
+
+void ext_free_block(struct ext_sb *s, uint32_t blk)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&s->lock, &flags);
+    ext_free_block_nolock(s, blk);
+    spin_unlock_irqrestore(&s->lock, flags);
 }
 
 static void free_indirect(struct ext_sb *s, uint32_t blk, int level)
