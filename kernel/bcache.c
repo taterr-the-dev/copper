@@ -9,7 +9,9 @@
 
 struct bcache_entry {
     int valid;
+    const void *dev;
     uint64_t disk_block;
+    uint32_t len;
     uint8_t data[BLOCK_SIZE];
     uint32_t last_used;
 };
@@ -26,15 +28,15 @@ void bcache_init(void) {
     }
 }
 
-int bcache_read(uint64_t disk_block, void *buf) {
-    if (!cache) return 0;
+int bcache_read(const void *dev, uint64_t disk_block, void *buf, uint32_t len) {
+    if (!cache || len == 0 || len > BLOCK_SIZE) return 0;
     int hit = 0;
     uint64_t flags;
     spin_lock_irqsave(&bcache_lock, &flags);
     tick++;
     for (int i = 0; i < BCACHE_SIZE; i++) {
-        if (cache[i].valid && cache[i].disk_block == disk_block) {
-            memcpy(buf, cache[i].data, BLOCK_SIZE);
+        if (cache[i].valid && cache[i].dev == dev && cache[i].disk_block == disk_block && cache[i].len == len) {
+            memcpy(buf, cache[i].data, len);
             cache[i].last_used = tick;
             hit = 1;
             break;
@@ -44,8 +46,8 @@ int bcache_read(uint64_t disk_block, void *buf) {
     return hit;
 }
 
-void bcache_store(uint64_t disk_block, const void *buf) {
-    if (!cache) return;
+void bcache_store(const void *dev, uint64_t disk_block, const void *buf, uint32_t len) {
+    if (!cache || len == 0 || len > BLOCK_SIZE) return;
     uint64_t flags;
     spin_lock_irqsave(&bcache_lock, &flags);
     tick++;
@@ -53,6 +55,12 @@ void bcache_store(uint64_t disk_block, const void *buf) {
     int best = -1;
     uint32_t oldest = 0xFFFFFFFF;
     for (int i = 0; i < BCACHE_SIZE; i++) {
+        if (cache[i].valid && cache[i].dev == dev && cache[i].disk_block == disk_block) {
+            best = i;
+            break;
+        }
+    }
+    for (int i = 0; best < 0 && i < BCACHE_SIZE; i++) {
         if (!cache[i].valid) {
             best = i;
             break;
@@ -65,21 +73,22 @@ void bcache_store(uint64_t disk_block, const void *buf) {
 
     if (best >= 0) {
         cache[best].valid = 1;
+        cache[best].dev = dev;
         cache[best].disk_block = disk_block;
-        memcpy(cache[best].data, buf, BLOCK_SIZE);
+        cache[best].len = len;
+        memcpy(cache[best].data, buf, len);
         cache[best].last_used = tick;
     }
     spin_unlock_irqrestore(&bcache_lock, flags);
 }
 
-void bcache_invalidate(uint64_t disk_block) {
+void bcache_invalidate(const void *dev, uint64_t disk_block) {
     if (!cache) return;
     uint64_t flags;
     spin_lock_irqsave(&bcache_lock, &flags);
     for (int i = 0; i < BCACHE_SIZE; i++) {
-        if (cache[i].valid && cache[i].disk_block == disk_block) {
+        if (cache[i].valid && cache[i].dev == dev && cache[i].disk_block == disk_block) {
             cache[i].valid = 0;
-            break;
         }
     }
     spin_unlock_irqrestore(&bcache_lock, flags);

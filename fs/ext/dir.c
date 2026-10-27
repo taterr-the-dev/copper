@@ -18,33 +18,41 @@ uint32_t ext_resolve_with_symlinks(struct ext_sb *s, const char *path, int depth
         uint32_t size;
         memcpy(&size, in + 4, 4);
         if (size >= 256) size = 255;
-        
+
         char target[256];
-        if (size <= 60) {
+        if (size < 60) {
             memcpy(target, in + 40, size);
         } else {
             uint32_t blk;
             memcpy(&blk, in + 40, 4);
-            ext_read_blk(s, blk, target);
+            uint8_t *tmp = kmalloc(s->bs);
+            if (!tmp) return 0;
+            if (ext_read_blk(s, blk, tmp) != 0) {
+                kfree(tmp);
+                return 0;
+            }
+            memcpy(target, tmp, size);
+            kfree(tmp);
         }
         target[size] = 0;
-        
+
         if (target[0] == '/') {
             return ext_resolve_with_symlinks(s, target, depth + 1);
         }
-        
+
         char dir_path[256];
         const char *last_slash = strrchr(path, '/');
         if (last_slash == path) {
             strcpy(dir_path, "/");
         } else if (last_slash) {
             size_t len = last_slash - path;
+            if (len >= sizeof(dir_path)) return 0;
             memcpy(dir_path, path, len);
             dir_path[len] = 0;
         } else {
             strcpy(dir_path, ".");
         }
-        
+
         char abs_target[512];
         if (strcmp(dir_path, "/") == 0) {
             abs_target[0] = '/';
@@ -54,7 +62,7 @@ uint32_t ext_resolve_with_symlinks(struct ext_sb *s, const char *path, int depth
             strcat(abs_target, "/");
             strcat(abs_target, target);
         }
-        
+
         return ext_resolve_with_symlinks(s, abs_target, depth + 1);
     }
     

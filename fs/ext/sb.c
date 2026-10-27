@@ -24,21 +24,21 @@ int ext_write_at(struct ext_sb *s, uint64_t offset, const void *in, size_t len)
     return wb(s, offset, in, len);
 }
 
-extern int bcache_read(uint64_t disk_block, void *buf);
-extern void bcache_store(uint64_t disk_block, const void *buf);
-extern void bcache_invalidate(uint64_t disk_block);
+extern int bcache_read(const void *dev, uint64_t disk_block, void *buf, uint32_t len);
+extern void bcache_store(const void *dev, uint64_t disk_block, const void *buf, uint32_t len);
+extern void bcache_invalidate(const void *dev, uint64_t disk_block);
 
 int ext_read_blk(struct ext_sb *s, uint32_t blk, void *buf) {
     uint64_t disk_block = (uint64_t)blk * s->bs;
     
-    if (bcache_read(disk_block, buf)) {
+    if (bcache_read(s->dev, disk_block, buf, s->bs)) {
         return 0;
     }
     
     int ret = rb(s, disk_block, buf, s->bs);
     
     if (ret == 0) {
-        bcache_store(disk_block, buf);
+        bcache_store(s->dev, disk_block, buf, s->bs);
     }
     
     return ret;
@@ -47,7 +47,7 @@ int ext_read_blk(struct ext_sb *s, uint32_t blk, void *buf) {
 int ext_write_blk(struct ext_sb *s, uint32_t blk, const void *buf) {
     uint64_t disk_block = (uint64_t)blk * s->bs;
     
-    bcache_invalidate(disk_block);
+    bcache_invalidate(s->dev, disk_block);
     
     return wb(s, disk_block, buf, s->bs);
 }
@@ -118,7 +118,7 @@ static uint32_t ext_alloc_block_nolock(struct ext_sb *s)
             if (!(buf[i / 8] & (1 << (i & 7)))) {
                 buf[i / 8] |= (1 << (i & 7));
                 wb(s, (uint64_t)bb * s->bs, buf, bmp_bytes);
-                bcache_invalidate((uint64_t)bb * s->bs);
+                bcache_invalidate(s->dev, (uint64_t)bb * s->bs);
                 kfree(buf);
                 free_count--;
                 bgd[12] = free_count & 0xFF;
@@ -126,7 +126,7 @@ static uint32_t ext_alloc_block_nolock(struct ext_sb *s)
                 uint64_t bgd_offset = (uint64_t)s->bgdt_block * s->bs + (uint64_t)g * s->desc_size;
                 uint32_t bgd_blk = bgd_offset / s->bs;
                 wb(s, bgd_offset, bgd, read_sz);
-                bcache_invalidate((uint64_t)bgd_blk * s->bs);
+                bcache_invalidate(s->dev, (uint64_t)bgd_blk * s->bs);
                 uint32_t abs_blk = (g * s->bpg) + i;
                 if (abs_blk == 0) continue;
                 return abs_blk;
@@ -161,7 +161,7 @@ static uint32_t ext_alloc_inode_nolock(struct ext_sb *s)
             if (!(buf[i / 8] & (1 << (i & 7)))) {
                 buf[i / 8] |= (1 << (i & 7));
                 wb(s, (uint64_t)ib * s->bs, buf, bmp_bytes);
-                bcache_invalidate((uint64_t)ib * s->bs);
+                bcache_invalidate(s->dev, (uint64_t)ib * s->bs);
                 kfree(buf);
                 free_count--;
                 bgd[14] = free_count & 0xFF;
@@ -169,7 +169,7 @@ static uint32_t ext_alloc_inode_nolock(struct ext_sb *s)
                 uint64_t bgd_offset = (uint64_t)s->bgdt_block * s->bs + (uint64_t)g * s->desc_size;
                 uint32_t bgd_blk = bgd_offset / s->bs;
                 wb(s, bgd_offset, bgd, read_sz);
-                bcache_invalidate((uint64_t)bgd_blk * s->bs);
+                bcache_invalidate(s->dev, (uint64_t)bgd_blk * s->bs);
                 return (g * s->ipg) + i + 1;
             }
         }
