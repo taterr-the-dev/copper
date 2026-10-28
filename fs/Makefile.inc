@@ -16,7 +16,7 @@ ifeq ($(CONFIG_FS_FAT32),y)
 endif
 
 ifneq ($(CONFIG_FS_EXT2)$(CONFIG_FS_EXT3)$(CONFIG_FS_EXT4),)
-    CFILES += fs/ext/sb.c fs/ext/inode.c fs/ext/dir.c fs/ext/file.c
+    CFILES += fs/ext/sb.c fs/ext/csum.c fs/ext/inode.c fs/ext/dir.c fs/ext/file.c
 endif
 ifeq ($(CONFIG_FS_EXT2),y)
     CFILES += fs/ext/ext2.c

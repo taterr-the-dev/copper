@@ -356,6 +356,16 @@ static int64_t sys_openat(int dfd, const char *p, int fl, int mo) {
     return -ENOENT;
   }
 
+  if ((fl & O_TRUNC) && (fl & 3) && fdtable[i].f.ops && fdtable[i].f.ops->truncate &&
+      (fdtable[i].f.mode & 0170000) == 0100000) {
+    int tr = vfs_truncate(&fdtable[i].f, 0);
+    if (tr) {
+      vfs_close(&fdtable[i].f);
+      fdtable[i].used = 0;
+      return tr;
+    }
+  }
+
 #ifdef CONFIG_TTY
   if (strcmp(full_path, "/dev/stdin") == 0 ||
       strcmp(full_path, "/dev/stdout") == 0 ||
@@ -624,6 +634,8 @@ static int64_t sys_fstatfd(int fd, void *st) {
   memcpy(u + 56, &blksize, 8);
   uint64_t blk = (sz + 511) / 512;
   memcpy(u + 64, &blk, 8);
+  uint64_t nl = fdtable[fd].f.nlink ? fdtable[fd].f.nlink : 1;
+  memcpy(u + 16, &nl, 8);
 
   for (int i = 0; i < 144; i++)
     ((uint8_t *)st)[i] = k_st[i];
@@ -792,6 +804,9 @@ static int64_t stat_path(const char *p, void *st) {
   memcpy(u + 28, &zero, 4);
   memcpy(u + 32, &zero, 4);
 
+  uint64_t nl = f.nlink ? f.nlink : 1;
+  memcpy(u + 16, &nl, 8);
+
   vfs_close(&f);
 
   for (int i = 0; i < 144; i++) {
@@ -820,7 +835,7 @@ static int64_t sys_statx(int dfd, const char *path, int flags,
 
   k_stx.stx_mask = 0x7ff | 0x400;
   k_stx.stx_blksize = 4096;
-  k_stx.stx_nlink = 1;
+  k_stx.stx_nlink = f.nlink ? f.nlink : 1;
   k_stx.stx_uid = f.uid;
   k_stx.stx_gid = f.gid;
   k_stx.stx_ino = 0;
@@ -1394,6 +1409,23 @@ static int64_t sys_ftruncate(int fd, uint64_t length) {
         return -EBADF;
     struct fs_file *f = &fdtable[fd].f;
     return vfs_truncate(f, length);
+}
+static int64_t sys_truncate(const char *path, uint64_t length) {
+    char abs_path[256];
+    resolve_path(path, abs_path, sizeof(abs_path));
+    struct fs_file f;
+    memset(&f, 0, sizeof(f));
+    if (vfs_open(abs_path, &f) != 0)
+        return -ENOENT;
+    int64_t r;
+    if ((f.mode & 0170000) == 0040000)
+        r = -EISDIR;
+    else if (!f.ops || !f.ops->truncate)
+        r = -EINVAL;
+    else
+        r = vfs_truncate(&f, length);
+    vfs_close(&f);
+    return r;
 }
 static int64_t sys_futex(int *u, int op, int val, int64_t to) {
   (void)to;
@@ -2066,6 +2098,8 @@ int64_t syscall_dispatch(struct pt_regs *r) {
   case 74:
   case 75:
     return 0;
+  case 76:
+    return sys_truncate((const char *)r->rdi, r->rsi);
   case 77:
     return sys_ftruncate((int)r->rdi, r->rsi);
   case 83:

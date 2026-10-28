@@ -192,6 +192,7 @@ const char *vfs_name(void) {
 }
 
 int vfs_open(const char *p, struct fs_file *f) {
+  f->nlink = 0;
   if (istmp(p)) {
     f->ops = &tmp_fs;
     f->sb = 0;

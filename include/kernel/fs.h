@@ -13,6 +13,7 @@ struct fs_file {
     uint32_t mode;
     uint32_t uid;
     uint32_t gid;
+    uint32_t nlink;
     struct fs_ops *ops;
 #ifdef CONFIG_TTY
     void *tty;

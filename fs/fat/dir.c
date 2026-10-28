@@ -85,6 +85,8 @@ int fat_resolve(struct fat_sb *s, const char *path, uint8_t *isdir, uint32_t *si
         int i = 0;
         while (p[i] && p[i] != '/')
             i++;
+        if (i >= (int)sizeof(part))
+            return 0;
         memcpy(part, p, i);
         part[i] = 0;
 

@@ -10,13 +10,13 @@ int ext4_mount(struct blkdev *dev, void **sbp)
     if ((sb[56] | (sb[57] << 8)) != 0xEF53) {
         return -1;
     }
-    uint32_t fc = sb[0x5C] | (sb[0x5D] << 8) | (sb[0x5E] << 16) | ((uint32_t)sb[0x5F] << 24);
-    uint32_t fic = sb[0x60] | (sb[0x61] << 8) | (sb[0x62] << 16) | ((uint32_t)sb[0x63] << 24);
+    uint32_t fic = ext_rd32(sb + 0x60);
+    uint32_t fro = ext_rd32(sb + 0x64);
 
-    if (!(fc & 0x0004)) {
-        return -1;
-    }
-    if (!(fic & 0x0040)) {
+    uint32_t ext4_incompat = EXT_INCOMPAT_EXTENTS | EXT_INCOMPAT_64BIT | EXT_INCOMPAT_FLEX_BG;
+    uint32_t ext4_ro = EXT_RO_HUGE_FILE | EXT_RO_GDT_CSUM | EXT_RO_DIR_NLINK | EXT_RO_EXTRA_ISIZE |
+                       EXT_RO_METADATA_CSUM;
+    if (!(fic & ext4_incompat) && !(fro & ext4_ro)) {
         return -1;
     }
     return ext_init_sb(dev, sbp);
