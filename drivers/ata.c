@@ -4,12 +4,24 @@
 #include <kernel/io.h>
 #include <kernel/string.h>
 #include <kernel/console.h>
+#include <kernel/spinlock.h>
 
 #define MAX_ATA_DRIVES 4
+
+struct ata_chan {
+    uint16_t base;
+    spinlock_t lock __attribute__((aligned(64)));
+};
+
+static struct ata_chan ata_chans[2] = {
+    { 0x1F0, SPINLOCK_INIT },
+    { 0x170, SPINLOCK_INIT },
+};
 
 struct ata_priv {
     uint16_t base;
     uint8_t drive;
+    struct ata_chan *chan;
 };
 
 static struct ata_priv ata_privs[MAX_ATA_DRIVES];
@@ -72,7 +84,11 @@ static int ata_read(struct blkdev *d, uint64_t off, void *buf, size_t len) {
     size_t done = 0;
     uint8_t *out = buf;
     while (done < len) {
-        if (ata_rd_sec(p, s, t)) return -1;
+        uint64_t fl;
+        spin_lock_irqsave(&p->chan->lock, &fl);
+        int r = ata_rd_sec(p, s, t);
+        spin_unlock_irqrestore(&p->chan->lock, fl);
+        if (r) return -1;
         size_t c = 512 - o;
         if (c > len - done) c = len - done;
         memcpy(out + done, t + o, c);
@@ -88,11 +104,18 @@ static int ata_write(struct blkdev *d, uint64_t off, const void *buf, size_t len
     size_t done = 0;
     const uint8_t *in = buf;
     while (done < len) {
-        if (ata_rd_sec(p, s, t)) return -1;
+        uint64_t fl;
         size_t c = 512 - o;
         if (c > len - done) c = len - done;
+        spin_lock_irqsave(&p->chan->lock, &fl);
+        if (ata_rd_sec(p, s, t)) {
+            spin_unlock_irqrestore(&p->chan->lock, fl);
+            return -1;
+        }
         memcpy(t + o, in + done, c);
-        if (ata_wr_sec(p, s, t)) return -1;
+        int r = ata_wr_sec(p, s, t);
+        spin_unlock_irqrestore(&p->chan->lock, fl);
+        if (r) return -1;
         done += c; o = 0; s++;
     }
     return 0;
@@ -125,6 +148,7 @@ int ata_init(void) {
                 if (ata_count >= MAX_ATA_DRIVES) break;
                 ata_privs[ata_count].base = base;
                 ata_privs[ata_count].drive = drive;
+                ata_privs[ata_count].chan = &ata_chans[b];
                 ata_wait_bsy(base);
                 outb(base + 6, drive);
                 outb(base + 2, 0);

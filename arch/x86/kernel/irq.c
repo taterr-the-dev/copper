@@ -60,8 +60,9 @@ void isr_handler(struct int_frame *f) {
 
         uint64_t pg = pmm_alloc();
         if (pg) {
-          vm_map((uint64_t *)current->cr3, cr2 & ~0xFFFULL, pg, 0x07);
           memset((void *)pg, 0, 4096);
+          if (!vm_map_if_absent((uint64_t *)current->cr3, cr2 & ~0xFFFULL, pg, 0x07))
+            pmm_free(pg);
           __asm__ volatile("invlpg (%0)" ::"r"(cr2) : "memory");
           return;
         }

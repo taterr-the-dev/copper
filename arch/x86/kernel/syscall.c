@@ -912,36 +912,46 @@ static int64_t sys_brk(uint64_t a) {
   int pid = current ? current->pid : 0;
   if (pid >= 64)
     return -ENOMEM;
+  uint64_t fl, cur, base;
+  spin_lock_irqsave(&vm_lock, &fl);
   if (!user_brk_cur[pid]) {
     user_brk_base[pid] = 0x0000100000000000ULL;
     user_brk_cur[pid] = 0x0000100000000000ULL;
   }
+  cur = user_brk_cur[pid];
+  base = user_brk_base[pid];
+  spin_unlock_irqrestore(&vm_lock, fl);
   if (a == 0)
-    return user_brk_cur[pid];
-  if (a >= user_brk_base[pid]) {
-    while (user_brk_cur[pid] < a) {
+    return cur;
+  if (a >= base) {
+    while (cur < a) {
       uint64_t pg = pmm_alloc();
       if (!pg)
-        return user_brk_cur[pid];
-      vm_map((uint64_t *)current->cr3, user_brk_cur[pid], pg, 0x07);
+        break;
+      vm_map((uint64_t *)current->cr3, cur, pg, 0x07);
       memset((void *)pg, 0, 4096);
-      user_brk_cur[pid] += 4096;
+      cur += 4096;
+      spin_lock_irqsave(&vm_lock, &fl);
+      user_brk_cur[pid] = cur;
+      spin_unlock_irqrestore(&vm_lock, fl);
     }
   }
-  return user_brk_cur[pid];
+  return cur;
 }
 
 void reset_mm_state(int pid) {
   if (pid >= 0 && pid < 64) {
+    uint64_t fl;
+    spin_lock_irqsave(&vm_lock, &fl);
     user_brk_base[pid] = 0;
     user_brk_cur[pid] = 0;
     user_mmap_base[pid] = 0;
+    spin_unlock_irqrestore(&vm_lock, fl);
   }
 }
 
 static uint8_t *mmap_arena;
 __attribute__((unused)) static size_t mmap_off = 0;
-static size_t mmap_cap = 0;
 __attribute__((unused)) static void mmap_arena_get(void) {
   if (mmap_arena)
     return;
@@ -953,7 +963,6 @@ __attribute__((unused)) static void mmap_arena_get(void) {
       return;
   }
   mmap_arena = (uint8_t *)b;
-  mmap_cap = 4194304;
 }
 
 struct file_vma {
@@ -975,15 +984,20 @@ int handle_file_page_fault(uint64_t addr, uint64_t err_code) {
   uint64_t page_addr = addr & ~0xFFF;
   int pid = current ? current->pid : 0;
 
-  struct file_vma *vma = NULL;
+  struct file_vma v;
+  int found = 0;
+  uint64_t fl;
+  spin_lock_irqsave(&vm_lock, &fl);
   for (int i = 0; i < MAX_VMAS; i++) {
     if (vmas[i].used && vmas[i].pid == pid && page_addr >= vmas[i].start &&
         page_addr < (vmas[i].start + vmas[i].length)) {
-      vma = &vmas[i];
+      v = vmas[i];
+      found = 1;
       break;
     }
   }
-  if (!vma)
+  spin_unlock_irqrestore(&vm_lock, fl);
+  if (!found)
     return 0;
 
   uint64_t phys_page = pmm_alloc();
@@ -991,10 +1005,10 @@ int handle_file_page_fault(uint64_t addr, uint64_t err_code) {
     return 0;
   memset((void *)phys_page, 0, 4096);
 
-  uint64_t offset_in_vma = page_addr - vma->start;
-  uint64_t file_offset = vma->file_offset + offset_in_vma;
+  uint64_t offset_in_vma = page_addr - v.start;
+  uint64_t file_offset = v.file_offset + offset_in_vma;
 
-  int fd = vma->fd;
+  int fd = v.fd;
   if (fd >= 0 && fd < MAXFD && fdtable[fd].used) {
     struct fs_file *f = &fdtable[fd].f;
     size_t old_pos = f->pos;
@@ -1012,10 +1026,11 @@ int handle_file_page_fault(uint64_t addr, uint64_t err_code) {
   }
 
   uint64_t flags = 0x05;
-  if (vma->prot & 0x2)
+  if (v.prot & 0x2)
     flags |= 0x02;
 
-  vm_map((uint64_t *)current->cr3, page_addr, phys_page, flags);
+  if (!vm_map_if_absent((uint64_t *)current->cr3, page_addr, phys_page, flags))
+    pmm_free(phys_page);
 
   __asm__ volatile("invlpg (%0)" ::"r"(page_addr) : "memory");
 
@@ -1030,20 +1045,22 @@ static int64_t sys_mmap(uint64_t a, size_t len, int p, int f, int fd,
   if (len == 0)
     return -EINVAL;
 
-  if (!user_mmap_base[pid]) {
-    user_mmap_base[pid] = 0x0000600000000000ULL;
-  }
-
-  (void)p;
   len = (len + 4095) & ~4095UL;
 
-  uint64_t va = user_mmap_base[pid];
-  if (va >= 0x0000700000000000ULL) {
-    user_mmap_base[pid] = 0x0000600000000000ULL;
-    va = user_mmap_base[pid];
-  }
+  int is_file = (fd >= 3 && fd < MAXFD && fdtable[fd].used);
+  int fixed = (f & 0x10) && a;
+  uint64_t fl;
+  uint64_t va;
 
-  if (fd >= 3 && fd < MAXFD && fdtable[fd].used) {
+  if (is_file) {
+    spin_lock_irqsave(&vm_lock, &fl);
+    if (!user_mmap_base[pid])
+      user_mmap_base[pid] = 0x0000600000000000ULL;
+    va = user_mmap_base[pid];
+    if (va >= 0x0000700000000000ULL) {
+      user_mmap_base[pid] = 0x0000600000000000ULL;
+      va = user_mmap_base[pid];
+    }
     int vma_idx = -1;
     for (int i = 0; i < MAX_VMAS; i++) {
       if (!vmas[i].used) {
@@ -1051,19 +1068,21 @@ static int64_t sys_mmap(uint64_t a, size_t len, int p, int f, int fd,
         break;
       }
     }
-    if (vma_idx == -1)
+    if (vma_idx == -1) {
+      spin_unlock_irqrestore(&vm_lock, fl);
       return -ENOMEM;
-
-    vmas[vma_idx].used = 1;
+    }
     vmas[vma_idx].pid = pid;
     vmas[vma_idx].start = va;
     vmas[vma_idx].length = len;
     vmas[vma_idx].fd = fd;
     vmas[vma_idx].file_offset = o;
     vmas[vma_idx].prot = p;
+    vmas[vma_idx].used = 1;
+    user_mmap_base[pid] += len;
+    spin_unlock_irqrestore(&vm_lock, fl);
 
     struct fs_file *mf = &fdtable[fd].f;
-		// TODO proper VMA
     uint64_t flags = 0x07;
 
     for (size_t off = 0; off < len; off += 4096) {
@@ -1086,27 +1105,28 @@ static int64_t sys_mmap(uint64_t a, size_t len, int p, int f, int fd,
       vm_map((uint64_t *)current->cr3, va + off, pg, flags);
     }
 
-    user_mmap_base[pid] += len;
     return va;
   }
 
 #ifdef CONFIG_VM
   if (current && current->cr3) {
-    int fixed = (f & 0x10) && a;
+    spin_lock_irqsave(&vm_lock, &fl);
+    if (!user_mmap_base[pid])
+      user_mmap_base[pid] = 0x0000600000000000ULL;
     uint64_t va_anon = fixed ? a : user_mmap_base[pid];
     if (va_anon >= 0x0000700000000000ULL) {
       user_mmap_base[pid] = 0x0000600000000000ULL;
       va_anon = user_mmap_base[pid];
     }
+    if (!fixed)
+      user_mmap_base[pid] += len;
+    spin_unlock_irqrestore(&vm_lock, fl);
     for (size_t off = 0; off < len; off += 4096) {
       uint64_t fr = pmm_alloc();
       if (!fr)
         return -ENOMEM;
       vm_map((uint64_t *)current->cr3, va_anon + off, fr, 0x07);
       memset((void *)fr, 0, 4096);
-    }
-    if (!fixed) {
-      user_mmap_base[pid] += len;
     }
     return va_anon;
   }
@@ -1149,6 +1169,36 @@ static int64_t sys_pipe(int pipefd[2]) {
   return 0;
 }
 
+static void munmap_page(uint64_t cr3, uint64_t a) {
+    uint64_t *p4 = (uint64_t *)(uint64_t)cr3;
+    int i4 = (a >> 39) & 511;
+    if (!(p4[i4] & 1)) return;
+
+    uint64_t *p3 = (uint64_t *)(p4[i4] & 0x000FFFFFFFFFF000ULL);
+    int i3 = (a >> 30) & 511;
+    if (!(p3[i3] & 1)) return;
+    if (p3[i3] & 0x80) return;
+
+    uint64_t *p2 = (uint64_t *)(p3[i3] & 0x000FFFFFFFFFF000ULL);
+    int i2 = (a >> 21) & 511;
+    if (!(p2[i2] & 1)) return;
+
+    if (p2[i2] & 0x80) {
+        p2[i2] = 0;
+        __asm__ volatile("invlpg (%0)" ::"r"(a) : "memory");
+        return;
+    }
+    uint64_t *p1 = (uint64_t *)(p2[i2] & 0x000FFFFFFFFFF000ULL);
+    int i1 = (a >> 12) & 511;
+    uint64_t pte = p1[i1];
+    if (pte & 1) {
+        uint64_t phys = pte & 0x000FFFFFFFFFF000ULL;
+        p1[i1] = 0;
+        __asm__ volatile("invlpg (%0)" ::"r"(a) : "memory");
+        pmm_free(phys);
+    }
+}
+
 static int64_t sys_munmap(uint64_t addr, size_t length) {
     if (addr & 0xFFF) return -EINVAL;
     if (length == 0) return -EINVAL;
@@ -1159,36 +1209,38 @@ static int64_t sys_munmap(uint64_t addr, size_t length) {
     cr3 &= ~0xFFF;
 
     for (uint64_t a = addr; a < addr + length; a += 0x1000) {
-        uint64_t *p4 = (uint64_t *)(uint64_t)cr3;
-        int i4 = (a >> 39) & 511;
-        if (!(p4[i4] & 1)) continue;
-
-        uint64_t *p3 = (uint64_t *)(p4[i4] & 0x000FFFFFFFFFF000ULL);
-        int i3 = (a >> 30) & 511;
-        if (!(p3[i3] & 1)) continue;
-        if (p3[i3] & 0x80) continue;
-
-        uint64_t *p2 = (uint64_t *)(p3[i3] & 0x000FFFFFFFFFF000ULL);
-        int i2 = (a >> 21) & 511;
-        if (!(p2[i2] & 1)) continue;
-
-        if (p2[i2] & 0x80) {
-            p2[i2] = 0;
-            __asm__ volatile("invlpg (%0)" ::"r"(a) : "memory");
-            continue;
-        }
-        uint64_t *p1 = (uint64_t *)(p2[i2] & 0x000FFFFFFFFFF000ULL);
-        int i1 = (a >> 12) & 511;
-        uint64_t pte = p1[i1];
-        if (pte & 1) {
-            uint64_t phys = pte & 0x000FFFFFFFFFF000ULL;
-            p1[i1] = 0;
-            __asm__ volatile("invlpg (%0)" ::"r"(a) : "memory");
-            pmm_free(phys);
-        }
+        uint64_t fl;
+        spin_lock_irqsave(&vm_lock, &fl);
+        munmap_page(cr3, a);
+        spin_unlock_irqrestore(&vm_lock, fl);
     }
     return 0;
 }
+
+static void mprotect_page(uint64_t *p4, uint64_t curr, int prot) {
+    int i4 = (curr >> 39) & 511;
+    if (!(p4[i4] & 1)) return;
+    uint64_t *p3 = (uint64_t *)(p4[i4] & 0x000FFFFFFFFFF000ULL);
+    int i3 = (curr >> 30) & 511;
+    if (!(p3[i3] & 1)) return;
+    if (p3[i3] & 0x80) return;
+    uint64_t *p2 = (uint64_t *)(p3[i3] & 0x000FFFFFFFFFF000ULL);
+    int i2 = (curr >> 21) & 511;
+    if (!(p2[i2] & 1)) return;
+    if (p2[i2] & 0x80) return;
+    uint64_t *p1 = (uint64_t *)(p2[i2] & 0x000FFFFFFFFFF000ULL);
+    int i1 = (curr >> 12) & 511;
+    if (!(p1[i1] & 1)) return;
+    uint64_t flags = 0x05;
+    if (p1[i1] & 0x200)
+        flags |= 0x200;
+    else if (prot & 2)
+        flags |= 0x02;
+    uint64_t pa = p1[i1] & 0x000FFFFFFFFFF000ULL;
+    p1[i1] = pa | flags;
+    __asm__ volatile("invlpg (%0)" ::"r"(curr) : "memory");
+}
+
 static int64_t sys_mprotect(uint64_t addr, size_t len, int prot) {
   if (!current || !current->cr3) return -EINVAL;
   if (addr & 0xFFF) return -EINVAL;
@@ -1198,6 +1250,8 @@ static int64_t sys_mprotect(uint64_t addr, size_t len, int prot) {
     return -ENOMEM;
   }
   int pid = current ? current->pid : 0;
+  uint64_t fl;
+  spin_lock_irqsave(&vm_lock, &fl);
   for (int i = 0; i < MAX_VMAS; i++) {
     if (vmas[i].used && vmas[i].pid == pid) {
       if (addr < vmas[i].start + vmas[i].length && (addr + len) > vmas[i].start) {
@@ -1205,27 +1259,13 @@ static int64_t sys_mprotect(uint64_t addr, size_t len, int prot) {
       }
     }
   }
+  spin_unlock_irqrestore(&vm_lock, fl);
   uint64_t *p4 = (uint64_t *)current->cr3;
   uint64_t end = addr + len;
   for (uint64_t curr = addr; curr < end; curr += 4096) {
-    int i4 = (curr >> 39) & 511;
-		if (!(p4[i4] & 1)) continue;
-    uint64_t *p3 = (uint64_t *)(p4[i4] & 0x000FFFFFFFFFF000ULL);
-    int i3 = (curr >> 30) & 511;
-    if (!(p3[i3] & 1)) continue;
-    if (p3[i3] & 0x80) continue;
-    uint64_t *p2 = (uint64_t *)(p3[i3] & 0x000FFFFFFFFFF000ULL);
-    int i2 = (curr >> 21) & 511;
-    if (!(p2[i2] & 1)) continue;
-    if (p2[i2] & 0x80) continue;
-    uint64_t *p1 = (uint64_t *)(p2[i2] & 0x000FFFFFFFFFF000ULL);
-    int i1 = (curr >> 12) & 511;
-    if (!(p1[i1] & 1)) continue;
-    uint64_t flags = 0x05;
-    if (prot & 2) flags |= 0x02;
-    uint64_t pa = p1[i1] & 0x000FFFFFFFFFF000ULL;
-    p1[i1] = pa | flags;
-    __asm__ volatile("invlpg (%0)" ::"r"(curr) : "memory");
+    spin_lock_irqsave(&vm_lock, &fl);
+    mprotect_page(p4, curr, prot);
+    spin_unlock_irqrestore(&vm_lock, fl);
   }
   return 0;
 }
@@ -1565,9 +1605,14 @@ static int64_t sys_fork(struct pt_regs *r) {
       }
     }
     memcpy(cwd_table[rc], cwd_table[parent_pid], 256);
-    user_brk_base[rc] = user_brk_base[parent_pid];
-    user_brk_cur[rc] = user_brk_cur[parent_pid];
-    user_mmap_base[rc] = user_mmap_base[parent_pid];
+    {
+      uint64_t mfl;
+      spin_lock_irqsave(&vm_lock, &mfl);
+      user_brk_base[rc] = user_brk_base[parent_pid];
+      user_brk_cur[rc] = user_brk_cur[parent_pid];
+      user_mmap_base[rc] = user_mmap_base[parent_pid];
+      spin_unlock_irqrestore(&vm_lock, mfl);
+    }
   }
 
   return rc;

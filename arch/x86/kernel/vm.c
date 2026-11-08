@@ -12,10 +12,13 @@ extern void hex64(uint64_t v);
 extern void put_u64(uint64_t v);
 
 uint64_t boot_cr3 = 0;
+spinlock_t vm_lock __attribute__((aligned(64))) = SPINLOCK_INIT;
 void vm_init(void) {
   __asm__ volatile("mov %%cr3,%0" : "=r"(boot_cr3));
+  spinlock_init(&vm_lock);
 }
-void vm_map(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl) {
+static int map_nolock(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl,
+                      int only_if_absent) {
   int i4 = (va >> 39) & 511, i3 = (va >> 30) & 511, i2 = (va >> 21) & 511,
       i1 = (va >> 12) & 511;
   if (!(p4[i4] & PTE_P)) {
@@ -43,7 +46,23 @@ void vm_map(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl) {
     p2[i2] = f | 0x07;
   }
   uint64_t *p1 = (uint64_t *)(p2[i2] & MASK);
+  if (only_if_absent && (p1[i1] & PTE_P))
+    return 0;
   p1[i1] = pa | fl;
+  return 1;
+}
+void vm_map(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl) {
+  uint64_t flags;
+  spin_lock_irqsave(&vm_lock, &flags);
+  map_nolock(p4, va, pa, fl, 0);
+  spin_unlock_irqrestore(&vm_lock, flags);
+}
+int vm_map_if_absent(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl) {
+  uint64_t flags;
+  spin_lock_irqsave(&vm_lock, &flags);
+  int r = map_nolock(p4, va, pa, fl, 1);
+  spin_unlock_irqrestore(&vm_lock, flags);
+  return r;
 }
 uint64_t *vm_new_as(void) {
   uint64_t *p4 = (uint64_t *)pmm_alloc();
@@ -77,7 +96,7 @@ uint64_t *vm_new_as(void) {
   return p4;
 }
 
-uint64_t *vm_clone_as(uint64_t *src) {
+static uint64_t *clone_nolock(uint64_t *src) {
   uint64_t *p4 = (uint64_t *)pmm_alloc();
   if (!p4)
     return 0;
@@ -160,6 +179,14 @@ uint64_t *vm_clone_as(uint64_t *src) {
     }
     p4[i4] = (uint64_t)d3 | 0x07;
   }
+  return p4;
+}
+
+uint64_t *vm_clone_as(uint64_t *src) {
+  uint64_t flags;
+  spin_lock_irqsave(&vm_lock, &flags);
+  uint64_t *p4 = clone_nolock(src);
+  spin_unlock_irqrestore(&vm_lock, flags);
   __asm__ volatile("mov %0, %%cr3" ::"r"(src) : "memory");
   return p4;
 }
@@ -168,7 +195,7 @@ __attribute__((unused)) static inline int is_canonical(uint64_t addr) {
   return (addr >> 47) == 0 || (addr >> 47) == 0x1FFFF;
 }
 
-int vm_cow_handle(uint64_t *cr3, uint64_t va) {
+static int cow_nolock(uint64_t *cr3, uint64_t va) {
   if (!cr3) {
     return 0;
   }
@@ -209,6 +236,10 @@ int vm_cow_handle(uint64_t *cr3, uint64_t va) {
     return 0;
   }
   if (!(p1e & PTE_COW)) {
+    if ((p1e & 0x2) && (p1e & 0x4)) {
+      __asm__ volatile("invlpg (%0)" ::"r"(va) : "memory");
+      return 1;
+    }
     return 0;
   }
 
@@ -222,6 +253,14 @@ int vm_cow_handle(uint64_t *cr3, uint64_t va) {
   p1[p1_idx] = newpg | ((p1e & 0xFFF) & ~PTE_COW) | 0x02;
   __asm__ volatile("invlpg (%0)" ::"r"(va) : "memory");
   return 1;
+}
+
+int vm_cow_handle(uint64_t *cr3, uint64_t va) {
+  uint64_t flags;
+  spin_lock_irqsave(&vm_lock, &flags);
+  int r = cow_nolock(cr3, va);
+  spin_unlock_irqrestore(&vm_lock, flags);
+  return r;
 }
 
 void vm_map_np(uint64_t *cr3, uint64_t virt, uint64_t flags) {
