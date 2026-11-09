@@ -93,7 +93,7 @@ void tty_insert_flip_char(struct tty *tty, char ch) {
 int tty_read(struct tty *tty, char *buf, size_t len) {
   size_t rd = 0;
   while (rd < len) {
-    if (current && current->sig_pending) {
+    if (current && signal_interrupt()) {
       return rd > 0 ? (int)rd : -EINTR;
     }
     if (tty->termios.c_lflag & ICANON) {
@@ -115,7 +115,7 @@ int tty_read(struct tty *tty, char *buf, size_t len) {
         schedule();
         tty->read_waiter = NULL;
 				arch_sti();
-        if (current && current->sig_pending) {
+        if (current && signal_interrupt()) {
           return rd > 0 ? (int)rd : -EINTR;
         }
         continue;
@@ -129,7 +129,7 @@ int tty_read(struct tty *tty, char *buf, size_t len) {
       schedule();
       tty->read_waiter = NULL;
       arch_sti();
-      if (current && current->sig_pending) {
+      if (current && signal_interrupt()) {
         return rd > 0 ? (int)rd : -EINTR;
       }
       continue;

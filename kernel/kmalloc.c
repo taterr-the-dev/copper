@@ -12,6 +12,7 @@ struct hdr {
   struct hdr *next;
 };
 static struct hdr *fl;
+static int boot_heap_retired;
 void kmalloc_init(void) {
   fl = (struct hdr *)heap;
   fl->size = HEAP_SIZE - sizeof(struct hdr);
@@ -54,6 +55,8 @@ void *kmalloc(size_t n) {
 void kfree(void *p) {
   if (!p)
     return;
+  if (boot_heap_retired && (uint8_t *)p >= heap && (uint8_t *)p < heap + HEAP_SIZE)
+    return;
   uint64_t flags;
   spin_lock_irqsave(&kmalloc_lock, &flags);
   struct hdr *h = ((struct hdr *)p) - 1;
@@ -67,4 +70,32 @@ void kfree(void *p) {
   }
   spin_unlock_irqrestore(&kmalloc_lock, flags);
 }
+#ifdef CONFIG_VM
+#define RELOC_PAGES 4096
+extern uint64_t pmm_alloc_contig_top(size_t pages, uint64_t min_addr, uint64_t max_addr);
+extern void con_puts(const char *s);
+void kmalloc_relocate(void) {
+  uint64_t base = pmm_alloc_contig_top(RELOC_PAGES, 0x4000000ULL, 0x40000000ULL);
+  if (!base) {
+    con_puts("[KMALLOC] no high region available, staying in boot heap\n");
+    return;
+  }
+  struct hdr *a = (struct hdr *)base;
+  a->size = RELOC_PAGES * 4096 - sizeof(struct hdr);
+  a->free = 1;
+  a->next = 0;
+  uint64_t flags;
+  spin_lock_irqsave(&kmalloc_lock, &flags);
+  struct hdr *tail = 0;
+  for (struct hdr *h = fl; h; h = h->next) {
+    if ((uint8_t *)h >= heap && (uint8_t *)h < heap + HEAP_SIZE)
+      h->free = 0;
+    tail = h;
+  }
+  tail->next = a;
+  boot_heap_retired = 1;
+  spin_unlock_irqrestore(&kmalloc_lock, flags);
+  con_puts("[OK] kmalloc: heap moved above user address range.\n");
+}
+#endif
 #endif

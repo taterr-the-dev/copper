@@ -170,6 +170,8 @@ int64_t sys_recvfrom(int fd, void *buf, size_t len, int flags,
       }
       return copy_len;
     }
+    if (signal_interrupt())
+      return -EINTR;
     yield();
   }
 }
@@ -197,6 +199,8 @@ int64_t sys_accept(int fd, void *addr, int *addrlen) {
     return -EINVAL;
 
   int pcb_idx = tcp_accept(tcp_pcbs[fd]);
+  if (pcb_idx < 0)
+    return -EINTR;
 
   for (int i = 3; i < 64; i++) {
     if (!fdt[i].used) {

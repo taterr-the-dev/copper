@@ -96,6 +96,7 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
     }
     con_puts("\n");
   }
+  kmalloc_relocate();
   con_puts("[OK] VM: per-process address spaces on.\n");
   vm_sanitize_boot_cr3();
 #endif

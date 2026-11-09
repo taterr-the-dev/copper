@@ -274,11 +274,14 @@ int tcp_connect(uint32_t dst_ip, uint16_t dst_port) {
   return new_idx;
 }
 
+extern int signal_interrupt(void);
+
 int tcp_wait_connect(int pcb_idx) {
   extern void e1000_poll_rx(void);
   int timeout = 0;
   while (tcps[pcb_idx].state != 3) {
     e1000_poll_rx();
+    if (signal_interrupt()) return -4;
     yield();
     timeout++;
     if (timeout > 100000) return -1;
@@ -295,6 +298,7 @@ int tcp_accept(int listen_pcb_idx) {
         return i;
       }
     }
+    if (signal_interrupt()) return -4;
     yield();
   }
 }
@@ -304,6 +308,7 @@ int tcp_read(int pcb_idx, void *buf, int len) {
   
   while (tcps[pcb_idx].rx_len == 0 && tcps[pcb_idx].state == 3) {
     e1000_poll_rx();
+    if (signal_interrupt()) return -4;
     yield();
   }
   

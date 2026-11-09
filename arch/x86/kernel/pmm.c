@@ -80,4 +80,31 @@ void pmm_free(uint64_t a) {
     }
     spin_unlock_irqrestore(&pmm_lock, flags);
 }
+uint64_t pmm_alloc_contig_top(size_t pages, uint64_t min_addr, uint64_t max_addr) {
+    uint64_t flags;
+    size_t hi = max_addr > BASE ? (max_addr - BASE) / 4096 : 0;
+    size_t lo = min_addr > BASE ? (min_addr - BASE) / 4096 : 0;
+    if (hi > NF) hi = NF;
+    uint64_t result = 0;
+    size_t run = 0;
+    spin_lock_irqsave(&pmm_lock, &flags);
+    for (size_t i = hi; i > lo; i--) {
+        size_t idx = i - 1;
+        if (!(bmp[idx / 8] & (1 << (idx & 7)))) {
+            run++;
+            if (run == pages) {
+                for (size_t k = 0; k < pages; k++) {
+                    size_t j = idx + k;
+                    bmp[j / 8] |= 1 << (j & 7);
+                }
+                result = BASE + (uint64_t)idx * 4096;
+                break;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    spin_unlock_irqrestore(&pmm_lock, flags);
+    return result;
+}
 #endif

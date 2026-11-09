@@ -3,6 +3,7 @@
 #include <kernel/types.h>
 #include <kernel/spinlock.h>
 #define TASK_STACK 65536
+#define MAX_PROCS 64
 #define USTACK_VA 0x0000700000000000ULL
 #define USTACK_NP 512
 #define T_RUN 1
@@ -104,6 +105,9 @@ int futex_wake(uint64_t *u, int n);
 struct int_frame;
 
 void send_signal(int pid, int sig);
+int signal_interrupt(void);
+void proc_check_signals(void);
+void proc_reap_cleanup(int pid);
 void deliver_signals(struct int_frame *f);
 extern spinlock_t sched_lock;
 #endif

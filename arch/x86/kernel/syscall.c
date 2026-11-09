@@ -414,6 +414,8 @@ static int64_t sys_readfd(int fd, void *b, size_t n) {
       while (pb->count == 0) {
         if (pb->write_closed)
           return 0;
+        if (signal_interrupt())
+          return -EINTR;
         yield();
       }
     }
@@ -477,6 +479,8 @@ static int64_t sys_writefd(int fd, const char *b, size_t n) {
     size_t written = 0;
     while (written < n) {
       while (pb->count == 4096) {
+        if (signal_interrupt())
+          return written ? (int64_t)written : -EINTR;
         yield();
       }
 
@@ -904,6 +908,18 @@ static int64_t sys_faccessat(int dfd, const char *p, int m, int flags) {
   return -ENOENT;
 }
 
+struct file_vma {
+  int used;
+  int pid;
+  uint64_t start;
+  uint64_t length;
+  int fd;
+  uint64_t file_offset;
+  int prot;
+};
+#define MAX_VMAS 1024
+static struct file_vma vmas[MAX_VMAS];
+
 static uint64_t user_brk_base[64];
 static uint64_t user_brk_cur[64];
 static uint64_t user_mmap_base[64];
@@ -943,6 +959,10 @@ void reset_mm_state(int pid) {
   if (pid >= 0 && pid < 64) {
     uint64_t fl;
     spin_lock_irqsave(&vm_lock, &fl);
+    for (int i = 0; i < MAX_VMAS; i++) {
+      if (vmas[i].used && vmas[i].pid == pid)
+        vmas[i].used = 0;
+    }
     user_brk_base[pid] = 0;
     user_brk_cur[pid] = 0;
     user_mmap_base[pid] = 0;
@@ -965,17 +985,14 @@ __attribute__((unused)) static void mmap_arena_get(void) {
   mmap_arena = (uint8_t *)b;
 }
 
-struct file_vma {
-  int used;
-  int pid;
-  uint64_t start;
-  uint64_t length;
-  int fd;
-  uint64_t file_offset;
-  int prot;
-};
-#define MAX_VMAS 1024
-static struct file_vma vmas[MAX_VMAS];
+
+void proc_reap_cleanup(int pid) {
+  if (pid < 0 || pid >= 64)
+    return;
+  cleanup_process_fds(pid);
+  reset_mm_state(pid);
+  copy_str(cwd_table[pid], "/", 256);
+}
 
 int handle_file_page_fault(uint64_t addr, uint64_t err_code) {
   if (err_code & 0x1)
@@ -2041,8 +2058,9 @@ int64_t sys_kill(int pid, int sig) {
     struct task *start = t;
     do {
       if ((int)t->pid == pid) {
-        __atomic_fetch_or(&t->sig_pending, 1ULL << sig, __ATOMIC_ACQ_REL);
-        if (t->state == T_BLOCKED) {
+        if (sig)
+          __atomic_fetch_or(&t->sig_pending, 1ULL << sig, __ATOMIC_ACQ_REL);
+        if (sig && t->state == T_BLOCKED) {
           t->state = T_READY;
         }
         ret = 0;
@@ -2069,7 +2087,15 @@ int64_t sys_kill(int pid, int sig) {
   return ret;
 }
 
+static int64_t syscall_dispatch_inner(struct pt_regs *r);
 int64_t syscall_dispatch(struct pt_regs *r) {
+  int64_t ret = syscall_dispatch_inner(r);
+  if (current && current->sig_pending)
+    proc_check_signals();
+  return ret;
+}
+
+static int64_t syscall_dispatch_inner(struct pt_regs *r) {
 #ifdef CONFIG_DEBUG_SYSCALL
   {
     static int tc = 0;

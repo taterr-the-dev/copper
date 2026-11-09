@@ -18,7 +18,52 @@ extern void context_switch(struct task *, struct task *);
 struct task *current = 0;
 spinlock_t sched_lock __attribute__((aligned(64))) = SPINLOCK_INIT;
 static struct task idle_task;
-static uint32_t next_pid = 1;
+static uint64_t pid_map = 1;
+static uint32_t pid_hint = 0;
+extern void cleanup_process_fds(int pid);
+
+static int pid_alloc_locked(void) {
+  for (int i = 1; i < MAX_PROCS; i++) {
+    int p = ((pid_hint + i - 1) % (MAX_PROCS - 1)) + 1;
+    if (!(pid_map & (1ULL << p))) {
+      pid_map |= 1ULL << p;
+      pid_hint = p;
+      return p;
+    }
+  }
+  return -1;
+}
+
+static void pid_free_locked(int pid) {
+  if (pid > 0 && pid < MAX_PROCS)
+    pid_map &= ~(1ULL << pid);
+}
+
+static void reap_orphans_locked(void) {
+  struct task *prev = current;
+  struct task *t = current->next;
+  while (t != current) {
+    struct task *nx = t->next;
+    if (t != &idle_task && t->state == T_DEAD && t->parent == 0) {
+      prev->next = nx;
+      pid_free_locked(t->pid);
+      kfree(t->stack);
+      kfree(t);
+    } else {
+      prev = t;
+    }
+    t = nx;
+  }
+}
+
+static void orphan_children_locked(void) {
+  struct task *t = current->next;
+  while (t != current) {
+    if (t->parent == current)
+      t->parent = 0;
+    t = t->next;
+  }
+}
 
 void scheduler_init(void) {
   idle_task.kstack_top = (uint64_t)stack_top;
@@ -62,7 +107,14 @@ int kthread_create(void (*fn)(void *), void *arg, const char *name) {
   memcpy(t->name, name, 15);
   uint64_t flags;
   spin_lock_irqsave(&sched_lock, &flags);
-  int pid = next_pid++;
+  reap_orphans_locked();
+  int pid = pid_alloc_locked();
+  if (pid < 0) {
+    spin_unlock_irqrestore(&sched_lock, flags);
+    kfree(t->stack);
+    kfree(t);
+    return -11;
+  }
   t->pid = pid;
   t->next = current->next;
   current->next = t;
@@ -125,6 +177,7 @@ void kthread_exit(void) {
     p = p->next;
   struct task *nx = dead->next;
   p->next = nx;
+  pid_free_locked(dead->pid);
   current = nx;
   spin_unlock(&sched_lock);
   context_switch(dead, nx);
@@ -134,10 +187,12 @@ void kthread_exit(void) {
 #endif
 
 void do_exit(int code) {
+  cleanup_process_fds(current->pid);
   uint64_t flags;
   spin_lock_irqsave(&sched_lock, &flags);
   current->exit_code = (code & 0xff) << 8;
   current->state = T_DEAD;
+  orphan_children_locked();
 
   if (current->parent) {
     __atomic_fetch_or(&current->parent->sig_pending, 1ULL << SIGCHLD, __ATOMIC_ACQ_REL);
@@ -170,6 +225,11 @@ int wait4(int pid, int *status) {
           spin_unlock_irqrestore(&sched_lock, flags);
           kfree(t->stack);
           kfree(t);
+          proc_reap_cleanup(rpid);
+          uint64_t pf;
+          spin_lock_irqsave(&sched_lock, &pf);
+          pid_free_locked(rpid);
+          spin_unlock_irqrestore(&sched_lock, pf);
           if (status)
             *status = code;
           return rpid;
@@ -180,6 +240,10 @@ int wait4(int pid, int *status) {
     if (!any) {
       spin_unlock_irqrestore(&sched_lock, flags);
       return -10;
+    }
+    if (signal_interrupt()) {
+      spin_unlock_irqrestore(&sched_lock, flags);
+      return -4;
     }
     current->state = T_BLOCKED;
     spin_unlock(&sched_lock);
@@ -233,20 +297,28 @@ void alloc_fresh_stack(struct task *t) {
   t->ustack_np = USTACK_NP;
 }
 
-void kill_current(int sig) {
+static void die_by_signal(int sig) {
+  cleanup_process_fds(current->pid);
   uint64_t flags;
   spin_lock_irqsave(&sched_lock, &flags);
   current->exit_code = sig & 0x7f;
   current->state = T_DEAD;
-  
-  if (current->parent && current->parent->state == T_BLOCKED) {
-    current->parent->state = T_READY;
+  orphan_children_locked();
+  if (current->parent) {
+    __atomic_fetch_or(&current->parent->sig_pending, 1ULL << SIGCHLD, __ATOMIC_ACQ_REL);
+    if (current->parent->state == T_BLOCKED) {
+      current->parent->state = T_READY;
+    }
   }
   spin_unlock(&sched_lock);
 
   for (;;) {
     yield();
   }
+}
+
+void kill_current(int sig) {
+  die_by_signal(sig);
 }
 void send_signal(int pid, int sig) {
   uint64_t flags;
@@ -283,16 +355,15 @@ static void task_wake_if_blocked(struct task *t) {
   spin_unlock_irqrestore(&sched_lock, flags);
 }
 
-void deliver_signals(struct int_frame *f) {
-  if (!current || !current->sig_pending) return;
-  if ((f->cs & 3) != 3) return;
-
+static void handle_pending(void) {
   for (int sig = 1; sig < 64; sig++) {
-    if (!(current->sig_pending & (1ULL << sig))) continue;
-    if (current->sig_mask & (1ULL << sig)) continue;
+    uint64_t bit = 1ULL << sig;
+    if (!(current->sig_pending & bit)) continue;
+    int force = (sig == SIGKILL || sig == SIGSTOP);
+    if (!force && (current->sig_mask & bit)) continue;
 
-    __atomic_fetch_and(&current->sig_pending, ~(1ULL << sig), __ATOMIC_ACQ_REL);
-    uint64_t handler = current->sig_handlers[sig];
+    __atomic_fetch_and(&current->sig_pending, ~bit, __ATOMIC_ACQ_REL);
+    uint64_t handler = force ? SIG_DFL : current->sig_handlers[sig];
 
     if (handler == SIG_IGN) continue;
 
@@ -311,13 +382,42 @@ void deliver_signals(struct int_frame *f) {
           task_wake_if_blocked(current);
           continue;
         default:
-          current->exit_code = 128 + sig;
-          task_set_state(current, T_DEAD);
-          task_wake_if_blocked(current->parent);
-          schedule();
+          die_by_signal(sig);
           return;
       }
     }
     continue;
   }
+}
+
+int signal_interrupt(void) {
+  if (!current)
+    return 0;
+  uint64_t unmaskable = (1ULL << SIGKILL) | (1ULL << SIGSTOP);
+  uint64_t pend = current->sig_pending & ~(current->sig_mask & ~unmaskable);
+  for (int sig = 1; sig < 64 && pend; sig++) {
+    uint64_t bit = 1ULL << sig;
+    if (!(pend & bit)) continue;
+    pend &= ~bit;
+    if (sig == SIGKILL || sig == SIGSTOP) return 1;
+    uint64_t h = current->sig_handlers[sig];
+    if (h == SIG_IGN) continue;
+    if (h == SIG_DFL || h == 0) {
+      if (sig == SIGCHLD || sig == SIGURG || sig == SIGWINCH || sig == SIGCONT)
+        continue;
+    }
+    return 1;
+  }
+  return 0;
+}
+
+void proc_check_signals(void) {
+  if (!current || !current->sig_pending) return;
+  handle_pending();
+}
+
+void deliver_signals(struct int_frame *f) {
+  if (!current || !current->sig_pending) return;
+  if ((f->cs & 3) != 3) return;
+  handle_pending();
 }

@@ -4,4 +4,5 @@
 void kmalloc_init(void);
 void *kmalloc(size_t n);
 void kfree(void *p);
+void kmalloc_relocate(void);
 #endif
