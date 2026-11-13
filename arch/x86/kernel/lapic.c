@@ -8,6 +8,7 @@
 
 #define LAPIC_BASE_MSR 0x1B
 #define LAPIC_BASE_ADDR 0xFEE00000ULL
+#define LAPIC_VA 0xFFFFFF0000000000ULL
 
 #define LAPIC_ID       0x020
 #define LAPIC_EOI      0x0B0
@@ -41,9 +42,9 @@ void lapic_init(void) {
     uint64_t lapic_phys = acpi.lapic_address ? acpi.lapic_address : LAPIC_BASE_ADDR;
     uint64_t cr3;
     __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
-    vm_map((uint64_t *)(cr3 & ~0xFFF), lapic_phys, lapic_phys, 0x1B);
+    vm_map_kernel_shared(LAPIC_VA, lapic_phys, 0x1B);
     __asm__ volatile("mov %0, %%cr3" :: "r"(cr3) : "memory");
-    lapic = (volatile uint32_t *)lapic_phys;
+    lapic = (volatile uint32_t *)LAPIC_VA;
     uint32_t spurious = lapic_read(LAPIC_SPURIOUS);
     spurious |= (1 << 8);
     spurious |= 0xFF;

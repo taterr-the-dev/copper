@@ -7,6 +7,7 @@
 #define PTE_P 0x1
 #define MASK 0x000FFFFFFFFFF000ULL
 #define PTE_COW 0x200ULL
+#define KSHARED_IDX 510
 
 extern void hex64(uint64_t v);
 extern void put_u64(uint64_t v);
@@ -64,35 +65,40 @@ int vm_map_if_absent(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl) {
   spin_unlock_irqrestore(&vm_lock, flags);
   return r;
 }
+void vm_map_kernel_shared(uint64_t va, uint64_t pa, uint64_t fl) {
+  uint64_t flags;
+  spin_lock_irqsave(&vm_lock, &flags);
+  uint64_t *p4 = (uint64_t *)boot_cr3;
+  if (!(p4[KSHARED_IDX] & PTE_P))
+    p4[KSHARED_IDX] = pmm_alloc() | 0x03;
+  map_nolock(p4, va, pa, fl, 0);
+  spin_unlock_irqrestore(&vm_lock, flags);
+}
+
 uint64_t *vm_new_as(void) {
   uint64_t *p4 = (uint64_t *)pmm_alloc();
   uint64_t *p3 = (uint64_t *)pmm_alloc();
   uint64_t *p2 = (uint64_t *)pmm_alloc();
-  
+
   for (int i = 0; i < 512; i++) {
     p4[i] = 0;
     p3[i] = 0;
-    if (i < 512) {
-      if (i == 0x7F7) {
-        p2[i] = (uint64_t)i * 0x200000 | 0x9F;
-      } else {
-        p2[i] = (uint64_t)i * 0x200000 | 0x87;
-      }
-    }
+    p2[i] = (uint64_t)i * 0x200000 | 0x83;
   }
 
   uint64_t *p1 = (uint64_t *)pmm_alloc();
   for (int i = 0; i < 512; i++) {
     if (i == 0) {
-      p1[i] = 0; 
+      p1[i] = 0;
     } else {
-      p1[i] = (uint64_t)i * 0x1000 | 0x07; 
+      p1[i] = (uint64_t)i * 0x1000 | 0x03;
     }
   }
-  p2[0] = (uint64_t)p1 | 0x07; 
+  p2[0] = (uint64_t)p1 | 0x07;
 
   p3[0] = (uint64_t)p2 | 0x07;
   p4[0] = (uint64_t)p3 | 0x07;
+  p4[KSHARED_IDX] = ((uint64_t *)boot_cr3)[KSHARED_IDX];
   return p4;
 }
 
@@ -235,6 +241,9 @@ static int cow_nolock(uint64_t *cr3, uint64_t va) {
   if (!(p1e & 1)) {
     return 0;
   }
+  if (!(p1e & 0x4)) {
+    return 0;
+  }
   if (!(p1e & PTE_COW)) {
     if ((p1e & 0x2) && (p1e & 0x4)) {
       __asm__ volatile("invlpg (%0)" ::"r"(va) : "memory");
@@ -273,5 +282,6 @@ void vm_sanitize_boot_cr3(void) {
   extern uint64_t boot_cr3;
   uint64_t *p4 = (uint64_t *)boot_cr3;
   for (int i = 1; i < 512; i++)
-    p4[i] = 0;
+    if (i != KSHARED_IDX)
+      p4[i] = 0;
 }

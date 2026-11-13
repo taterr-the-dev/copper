@@ -32,5 +32,6 @@ struct percpu {
     } while (0)
 
 void percpu_init_bsp(void);
+struct percpu *percpu_get_area(uint32_t cpu_id);
 
 #endif

@@ -72,12 +72,12 @@ void kernel_main(uint32_t magic, uint32_t mboot_ptr) {
     con_puts("[OK] Booted via Multiboot.\n");
   else
     con_puts("[!!] Invalid Multiboot magic!\n");
+  extern void percpu_init_bsp(void);
+  percpu_init_bsp();
   gdt_init();
   arch_init_fpu();
   con_puts("[OK] GDT initialized.\n");
   idt_init();
-  extern void percpu_init_bsp(void);
-  percpu_init_bsp();
 #ifdef CONFIG_KMALLOC
   kmalloc_init();
 #ifdef CONFIG_VM

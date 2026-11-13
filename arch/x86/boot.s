@@ -47,14 +47,14 @@ _start:
     mov $pml4, %eax
     mov %eax, %cr3
     mov $pdpt, %eax
-    or $0x07, %eax
+    or $0x03, %eax
     mov %eax, pml4
     mov $pd, %eax
-    or $0x07, %eax
+    or $0x03, %eax
     mov %eax, pdpt
     # Fill PD: 512 x 2MB pages = 1GB identity map
     mov $pd, %ebp
-    mov $0x87, %eax
+    mov $0x83, %eax
     xor %ecx, %ecx
 1:
     mov %eax, (%ebp)

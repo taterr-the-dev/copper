@@ -1,6 +1,9 @@
 #include <kernel/console.h>
 #include <kernel/types.h>
 #include <kernel/percpu.h>
+#include <kernel/acpi.h>
+
+extern volatile uint32_t *lapic;
 
 struct tss {
     uint32_t rsv0;
@@ -61,9 +64,12 @@ void gdt_init_cpu(uint32_t cpu_id) {
         "mov $0x10,%%ax; mov %%ax,%%ds; mov %%ax,%%es; mov %%ax,%%ss" ::
         : "rax");
     __asm__ volatile("ltr %0" ::"r"((uint16_t)0x30));
-    percpu_write(gdt_ptr, my_gdt);
-    percpu_write(tss_ptr, my_tss);
-    percpu_write(kernel_stack, my_tss->rsp0);
+    struct percpu *pc = percpu_get_area(cpu_id);
+    if (pc) {
+        pc->gdt_ptr = my_gdt;
+        pc->tss_ptr = my_tss;
+        pc->kernel_stack = my_tss->rsp0;
+    }
 }
 
 void gdt_init(void) {
@@ -72,10 +78,15 @@ void gdt_init(void) {
 }
 
 void gdt_set_kernel_stack(uint64_t rsp0) {
-    struct tss *my_tss = percpu_read(tss_ptr);
-    if (my_tss) {
-        my_tss->rsp0 = rsp0;
+    uint32_t id = lapic ? (lapic[0x20 >> 2] >> 24) : 0;
+    uint32_t cpu = 0;
+    for (uint32_t i = 0; i < (uint32_t)acpi.cpu_count && i < MAX_CPUS; i++) {
+        if (acpi.cpu_apic_ids[i] == id) {
+            cpu = i;
+            break;
+        }
     }
+    percpu_tss[cpu].rsp0 = rsp0;
 }
 
 uint64_t gdt_get_ap_stack(uint32_t cpu_id) {

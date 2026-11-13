@@ -117,13 +117,14 @@ void isr_handler(struct int_frame *f) {
   uint8_t irq = f->int_no - 32;
   if (irq == 0) {
     timer_tick();
-#ifdef CONFIG_SCHED
-    sched_tick();
-#endif
 #ifdef CONFIG_LAPIC
     lapic_send_eoi();
 #else
     timer_send_eoi();
+#endif
+#ifdef CONFIG_SCHED
+    if (current && ((f->cs & 3) == 3 || current->pid == 0))
+      sched_tick();
 #endif
 #ifdef CONFIG_SCHED
     if ((f->cs & 3) == 3 && current) {
