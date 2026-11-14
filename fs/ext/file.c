@@ -80,6 +80,22 @@ int64_t ext_read(struct fs_file *f, void *out, size_t len)
         if (!blk) {
             memset(dst + bytes_read, 0, chunk);
         } else {
+            uint32_t run = 1;
+            if (off == 0 && chunk == s->bs) {
+                size_t maxrun = (to_read - bytes_read) / s->bs;
+                if (maxrun > 64)
+                    maxrun = 64;
+                while (run < maxrun &&
+                       ext_get_iblock(s, ino, in, blk_idx + run, 0) == blk + run)
+                    run++;
+            }
+            if (run > 1) {
+                size_t span = (size_t)run * s->bs;
+                if (ext_read_at(s, (uint64_t)blk * s->bs, dst + bytes_read, span))
+                    return bytes_read ? (int64_t)bytes_read : -EIO;
+                bytes_read += span;
+                continue;
+            }
             if (ext_read_blk(s, blk, bb))
                 return bytes_read ? (int64_t)bytes_read : -EIO;
             memcpy(dst + bytes_read, bb + off, chunk);

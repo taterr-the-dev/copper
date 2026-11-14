@@ -211,9 +211,13 @@ static uint64_t *clone_nolock(uint64_t *src) {
             d1[i1] = e;
             continue;
           }
-          uint64_t cow = (e & ~0x02ULL) | PTE_COW;
-          s1[i1] = cow;
-          d1[i1] = cow;
+          if (e & (0x02ULL | PTE_COW)) {
+            uint64_t cow = (e & ~0x02ULL) | PTE_COW;
+            s1[i1] = cow;
+            d1[i1] = cow;
+          } else {
+            d1[i1] = e;
+          }
           pmm_ref(e & MASK);
         }
       }

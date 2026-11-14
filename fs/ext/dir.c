@@ -439,21 +439,22 @@ static void dir_nlink_dec(uint8_t *in)
     ext_wr16(in + 26, l);
 }
 
-static int frees_blocks(const uint8_t *in)
+static int frees_blocks(struct ext_sb *s, const uint8_t *in)
 {
     uint16_t m = ext_rd16(in) & EXT_S_IFMT;
     if (m == EXT_S_IFREG || m == EXT_S_IFDIR)
         return 1;
     if (m == EXT_S_IFLNK)
-        return !ext_inode_is_fast_symlink(in);
+        return !ext_inode_is_fast_symlink(s, in);
     return 0;
 }
 
 static void destroy_inode(struct ext_sb *s, uint32_t ino, uint8_t *in)
 {
     int was_dir = (ext_rd16(in) & EXT_S_IFMT) == EXT_S_IFDIR;
-    if (frees_blocks(in))
+    if (frees_blocks(s, in))
         ext_free_inode_data(s, ino, in, 0);
+    ext_free_acl_block(s, in);
     memset(in, 0, s->inode_size);
     ext_write_inode(s, ino, in);
     ext_free_inode(s, ino, was_dir);

@@ -25,8 +25,30 @@ void ext_inode_add_blocks(struct ext_sb *s, uint8_t *in, int delta)
 
 int ext_inode_has_blocks(struct ext_sb *s, const uint8_t *in)
 {
-    (void)s;
-    return rd32(in + 28) != 0;
+    uint32_t b = rd32(in + 28);
+    uint32_t ea = rd32(in + 104) ? s->bs / 512 : 0;
+    return b > ea;
+}
+
+void ext_free_acl_block(struct ext_sb *s, const uint8_t *in)
+{
+    uint32_t blk = rd32(in + 104);
+    if (!blk || blk < s->first_data_block || blk >= s->blocks)
+        return;
+    uint8_t *buf = kmalloc(s->bs);
+    if (!buf)
+        return;
+    if (ext_read_blk(s, blk, buf) == 0 && rd32(buf) == 0xEA020000) {
+        uint32_t ref = rd32(buf + 4);
+        if (ref > 1) {
+            wr32(buf + 4, ref - 1);
+            ext_xattr_blk_csum_set(s, blk, buf);
+            ext_write_blk(s, blk, buf);
+        } else {
+            ext_free_block(s, blk);
+        }
+    }
+    kfree(buf);
 }
 
 static uint32_t alloc_data(struct ext_sb *s, uint8_t *in, uint32_t goal)
@@ -226,7 +248,7 @@ int ext_read_link_target(struct ext_sb *s, uint32_t ino, uint8_t *in, char *out,
     uint32_t size = rd32(in + 4);
     if (size >= max)
         size = max - 1;
-    if (size < 60 && !ext_inode_has_blocks(s, in)) {
+    if (ext_inode_is_fast_symlink(s, in)) {
         memcpy(out, in + 40, size);
         out[size] = 0;
         return size;
@@ -249,10 +271,10 @@ int ext_read_link_target(struct ext_sb *s, uint32_t ino, uint8_t *in, char *out,
     return size;
 }
 
-int ext_inode_is_fast_symlink(const uint8_t *in)
+int ext_inode_is_fast_symlink(struct ext_sb *s, const uint8_t *in)
 {
     uint16_t mode = in[0] | (in[1] << 8);
     if ((mode & EXT_S_IFMT) != EXT_S_IFLNK)
         return 0;
-    return rd32(in + 4) < 60 && rd32(in + 28) == 0;
+    return rd32(in + 4) < 60 && !ext_inode_has_blocks(s, in);
 }

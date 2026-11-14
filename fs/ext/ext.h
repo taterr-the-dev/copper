@@ -104,7 +104,9 @@ static inline void ext_set_isize(uint8_t *in, uint64_t v)
         ext_wr32(in + 0x6C, (uint32_t)(v >> 32));
 }
 
-int ext_inode_is_fast_symlink(const uint8_t *in);
+int ext_inode_is_fast_symlink(struct ext_sb *s, const uint8_t *in);
+void ext_free_acl_block(struct ext_sb *s, const uint8_t *in);
+void ext_xattr_blk_csum_set(struct ext_sb *s, uint32_t blk, uint8_t *buf);
 
 int ext_init_sb(struct blkdev *dev, void **sbp);
 

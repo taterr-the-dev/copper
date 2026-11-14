@@ -162,6 +162,18 @@ void ext_extent_blk_csum_set(struct ext_sb *s, uint32_t ino, const uint8_t *in, 
     wr32(buf + off, ext_crc32c(ext_inode_seed(s, ino, in), buf, off));
 }
 
+void ext_xattr_blk_csum_set(struct ext_sb *s, uint32_t blk, uint8_t *buf)
+{
+    if (!s->csum)
+        return;
+    uint8_t nr[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    wr32(nr, blk);
+    wr32(buf + 16, 0);
+    uint32_t c = ext_crc32c(s->csum_seed, nr, 8);
+    c = ext_crc32c(c, buf, s->bs);
+    wr32(buf + 16, c);
+}
+
 int ext_dir_tail_present(struct ext_sb *s, const uint8_t *buf)
 {
     const uint8_t *t = buf + s->bs - 12;

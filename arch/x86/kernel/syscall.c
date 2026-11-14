@@ -1275,13 +1275,15 @@ static void mprotect_page(uint64_t *p4, uint64_t curr, int prot) {
     if (p2[i2] & 0x80) return;
     uint64_t *p1 = (uint64_t *)(p2[i2] & 0x000FFFFFFFFFF000ULL);
     int i1 = (curr >> 12) & 511;
-    if (!(p1[i1] & 1)) return;
-    uint64_t flags = 0x05;
-    if (p1[i1] & 0x200)
-        flags |= 0x200;
-    else if (prot & 2)
-        flags |= 0x02;
+    if (!(p1[i1] & 1) || !(p1[i1] & 4)) return;
     uint64_t pa = p1[i1] & 0x000FFFFFFFFFF000ULL;
+    uint64_t flags = 0x05;
+    if (prot & 2) {
+        if (pmm_refcount(pa) > 1)
+            flags |= 0x200;
+        else
+            flags |= 0x02;
+    }
     p1[i1] = pa | flags;
     __asm__ volatile("invlpg (%0)" ::"r"(curr) : "memory");
 }

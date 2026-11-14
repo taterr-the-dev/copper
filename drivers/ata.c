@@ -46,77 +46,121 @@ static int ata_wait_drq(uint16_t base) {
     return -1;
 }
 
-static void ata_sel(struct ata_priv *p, uint64_t lba) {
+static inline void ata_insw(uint16_t port, void *addr, uint32_t cnt) {
+    __asm__ volatile("cld; rep insw" : "+D"(addr), "+c"(cnt) : "d"(port) : "memory");
+}
+
+static inline void ata_outsw(uint16_t port, const void *addr, uint32_t cnt) {
+    __asm__ volatile("cld; rep outsw" : "+S"(addr), "+c"(cnt) : "d"(port) : "memory");
+}
+
+static void ata_sel(struct ata_priv *p, uint64_t lba, uint32_t n) {
     ata_wait_bsy(p->base);
     outb(p->base + 6, p->drive | ((lba >> 24) & 0x0F));
-    outb(p->base + 2, 1);
+    outb(p->base + 2, n & 0xFF);
     outb(p->base + 3, lba & 0xFF);
     outb(p->base + 4, (lba >> 8) & 0xFF);
     outb(p->base + 5, (lba >> 16) & 0xFF);
-    ata_st(p->base); ata_st(p->base);
 }
 
-static int ata_rd_sec(struct ata_priv *p, uint64_t lba, uint8_t *b) {
-    ata_sel(p, lba);
+static int ata_rd(struct ata_priv *p, uint64_t lba, uint32_t n, uint8_t *b) {
+    ata_sel(p, lba, n);
     outb(p->base + 7, 0x20);
-    if (ata_wait_drq(p->base)) return -1;
-    for (int i = 0; i < 256; i++) {
-        uint16_t w = inw(p->base);
-        b[i * 2] = w & 0xFF;
-        b[i * 2 + 1] = w >> 8;
+    ata_st(p->base); ata_st(p->base);
+    for (uint32_t i = 0; i < n; i++) {
+        if (ata_wait_drq(p->base)) return -1;
+        ata_insw(p->base, b + (size_t)i * 512, 256);
     }
     return 0;
 }
 
-static int ata_wr_sec(struct ata_priv *p, uint64_t lba, const uint8_t *b) {
-    ata_sel(p, lba);
+static int ata_wr(struct ata_priv *p, uint64_t lba, uint32_t n, const uint8_t *b) {
+    ata_sel(p, lba, n);
     outb(p->base + 7, 0x30);
-    if (ata_wait_drq(p->base)) return -1;
-    for (int i = 0; i < 256; i++)
-        outw(p->base, b[i * 2] | (b[i * 2 + 1] << 8));
+    ata_st(p->base); ata_st(p->base);
+    for (uint32_t i = 0; i < n; i++) {
+        if (ata_wait_drq(p->base)) return -1;
+        ata_outsw(p->base, b + (size_t)i * 512, 256);
+    }
     return ata_wait_bsy(p->base);
 }
 
+#define ATA_CHUNK 8
+
 static int ata_read(struct blkdev *d, uint64_t off, void *buf, size_t len) {
     struct ata_priv *p = d->priv;
-    uint8_t t[512];
-    uint64_t s = off / 512, o = off % 512;
+    uint64_t s = off / 512;
+    uint32_t o = off % 512;
     size_t done = 0;
     uint8_t *out = buf;
     while (done < len) {
         uint64_t fl;
-        spin_lock_irqsave(&p->chan->lock, &fl);
-        int r = ata_rd_sec(p, s, t);
-        spin_unlock_irqrestore(&p->chan->lock, fl);
-        if (r) return -1;
-        size_t c = 512 - o;
-        if (c > len - done) c = len - done;
-        memcpy(out + done, t + o, c);
-        done += c; o = 0; s++;
+        size_t rem = len - done;
+        if (o == 0 && rem >= 512) {
+            uint8_t big[ATA_CHUNK * 512];
+            uint32_t n = rem / 512;
+            if (n > ATA_CHUNK) n = ATA_CHUNK;
+            spin_lock_irqsave(&p->chan->lock, &fl);
+            int r = ata_rd(p, s, n, big);
+            spin_unlock_irqrestore(&p->chan->lock, fl);
+            if (r) return -1;
+            memcpy(out + done, big, (size_t)n * 512);
+            done += (size_t)n * 512;
+            s += n;
+        } else {
+            uint8_t t[512];
+            spin_lock_irqsave(&p->chan->lock, &fl);
+            int r = ata_rd(p, s, 1, t);
+            spin_unlock_irqrestore(&p->chan->lock, fl);
+            if (r) return -1;
+            size_t c = 512 - o;
+            if (c > rem) c = rem;
+            memcpy(out + done, t + o, c);
+            done += c;
+            o = 0;
+            s++;
+        }
     }
     return 0;
 }
 
 static int ata_write(struct blkdev *d, uint64_t off, const void *buf, size_t len) {
     struct ata_priv *p = d->priv;
-    uint8_t t[512];
-    uint64_t s = off / 512, o = off % 512;
+    uint64_t s = off / 512;
+    uint32_t o = off % 512;
     size_t done = 0;
     const uint8_t *in = buf;
     while (done < len) {
         uint64_t fl;
-        size_t c = 512 - o;
-        if (c > len - done) c = len - done;
-        spin_lock_irqsave(&p->chan->lock, &fl);
-        if (ata_rd_sec(p, s, t)) {
+        size_t rem = len - done;
+        if (o == 0 && rem >= 512) {
+            uint8_t big[ATA_CHUNK * 512];
+            uint32_t n = rem / 512;
+            if (n > ATA_CHUNK) n = ATA_CHUNK;
+            memcpy(big, in + done, (size_t)n * 512);
+            spin_lock_irqsave(&p->chan->lock, &fl);
+            int r = ata_wr(p, s, n, big);
             spin_unlock_irqrestore(&p->chan->lock, fl);
-            return -1;
+            if (r) return -1;
+            done += (size_t)n * 512;
+            s += n;
+        } else {
+            uint8_t t[512];
+            size_t c = 512 - o;
+            if (c > rem) c = rem;
+            spin_lock_irqsave(&p->chan->lock, &fl);
+            if (ata_rd(p, s, 1, t)) {
+                spin_unlock_irqrestore(&p->chan->lock, fl);
+                return -1;
+            }
+            memcpy(t + o, in + done, c);
+            int r = ata_wr(p, s, 1, t);
+            spin_unlock_irqrestore(&p->chan->lock, fl);
+            if (r) return -1;
+            done += c;
+            o = 0;
+            s++;
         }
-        memcpy(t + o, in + done, c);
-        int r = ata_wr_sec(p, s, t);
-        spin_unlock_irqrestore(&p->chan->lock, fl);
-        if (r) return -1;
-        done += c; o = 0; s++;
     }
     return 0;
 }
