@@ -40,7 +40,15 @@ void isr_handler(struct int_frame *f) {
       uint64_t cr2;
       __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
       if ((f->err & 3) == 3) {
-        if (vm_cow_handle((uint64_t *)current->cr3, cr2)) {
+        int cr = vm_cow_handle((uint64_t *)current->cr3, cr2);
+        if (cr > 0) {
+          return;
+        }
+        if (cr < 0 && (f->cs & 3) == 3) {
+          con_puts("[OOM] PID ");
+          hex64(current->pid);
+          con_puts(" killed\n");
+          kill_current(SIGKILL);
           return;
         }
       }
@@ -60,11 +68,12 @@ void isr_handler(struct int_frame *f) {
 
         uint64_t pg = pmm_alloc();
         if (pg) {
-          memset((void *)pg, 0, 4096);
-          if (!vm_map_if_absent((uint64_t *)current->cr3, cr2 & ~0xFFFULL, pg, 0x07))
+          int mr = vm_map_if_absent((uint64_t *)current->cr3, cr2 & ~0xFFFULL, pg, 0x07);
+          if (mr <= 0)
             pmm_free(pg);
           __asm__ volatile("invlpg (%0)" ::"r"(cr2) : "memory");
-          return;
+          if (mr >= 0)
+            return;
         }
       }
       if ((f->cs & 3) == 3) {

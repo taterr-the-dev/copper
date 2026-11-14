@@ -39,6 +39,15 @@ static void pid_free_locked(int pid) {
     pid_map &= ~(1ULL << pid);
 }
 
+static void release_mm(void) {
+  uint64_t cr3 = current->cr3;
+  if (!cr3 || cr3 == boot_cr3)
+    return;
+  current->cr3 = 0;
+  __asm__ volatile("mov %0,%%cr3" ::"r"(boot_cr3) : "memory");
+  vm_free_as((uint64_t *)cr3);
+}
+
 static void reap_orphans_locked(void) {
   struct task *prev = current;
   struct task *t = current->next;
@@ -188,6 +197,7 @@ void kthread_exit(void) {
 
 void do_exit(int code) {
   cleanup_process_fds(current->pid);
+  release_mm();
   uint64_t flags;
   spin_lock_irqsave(&sched_lock, &flags);
   current->exit_code = (code & 0xff) << 8;
@@ -299,6 +309,7 @@ void alloc_fresh_stack(struct task *t) {
 
 static void die_by_signal(int sig) {
   cleanup_process_fds(current->pid);
+  release_mm();
   uint64_t flags;
   spin_lock_irqsave(&sched_lock, &flags);
   current->exit_code = sig & 0x7f;

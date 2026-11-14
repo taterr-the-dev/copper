@@ -924,6 +924,8 @@ static uint64_t user_brk_base[64];
 static uint64_t user_brk_cur[64];
 static uint64_t user_mmap_base[64];
 
+static void munmap_page(uint64_t cr3, uint64_t a);
+
 static int64_t sys_brk(uint64_t a) {
   int pid = current ? current->pid : 0;
   if (pid >= 64)
@@ -944,10 +946,21 @@ static int64_t sys_brk(uint64_t a) {
       uint64_t pg = pmm_alloc();
       if (!pg)
         break;
-      vm_map((uint64_t *)current->cr3, cur, pg, 0x07);
+      if (vm_map_chk((uint64_t *)current->cr3, cur, pg, 0x07) < 0) {
+        pmm_free(pg);
+        break;
+      }
       memset((void *)pg, 0, 4096);
       cur += 4096;
       spin_lock_irqsave(&vm_lock, &fl);
+      user_brk_cur[pid] = cur;
+      spin_unlock_irqrestore(&vm_lock, fl);
+    }
+    uint64_t want = (a + 4095) & ~4095ULL;
+    while (cur > want) {
+      cur -= 4096;
+      spin_lock_irqsave(&vm_lock, &fl);
+      munmap_page(current->cr3, cur);
       user_brk_cur[pid] = cur;
       spin_unlock_irqrestore(&vm_lock, fl);
     }
@@ -1046,8 +1059,11 @@ int handle_file_page_fault(uint64_t addr, uint64_t err_code) {
   if (v.prot & 0x2)
     flags |= 0x02;
 
-  if (!vm_map_if_absent((uint64_t *)current->cr3, page_addr, phys_page, flags))
+  int mr = vm_map_if_absent((uint64_t *)current->cr3, page_addr, phys_page, flags);
+  if (mr <= 0)
     pmm_free(phys_page);
+  if (mr < 0)
+    return 0;
 
   __asm__ volatile("invlpg (%0)" ::"r"(page_addr) : "memory");
 
@@ -1119,7 +1135,15 @@ static int64_t sys_mmap(uint64_t a, size_t len, int p, int f, int fd,
         mf->pos = old_pos;
       }
 
-      vm_map((uint64_t *)current->cr3, va + off, pg, flags);
+      if (vm_map_chk((uint64_t *)current->cr3, va + off, pg, flags) < 0) {
+        pmm_free(pg);
+        for (size_t u = 0; u < off; u += 4096) {
+          spin_lock_irqsave(&vm_lock, &fl);
+          munmap_page(current->cr3, va + u);
+          spin_unlock_irqrestore(&vm_lock, fl);
+        }
+        return -ENOMEM;
+      }
     }
 
     return va;
@@ -1140,9 +1164,16 @@ static int64_t sys_mmap(uint64_t a, size_t len, int p, int f, int fd,
     spin_unlock_irqrestore(&vm_lock, fl);
     for (size_t off = 0; off < len; off += 4096) {
       uint64_t fr = pmm_alloc();
-      if (!fr)
+      if (!fr || vm_map_chk((uint64_t *)current->cr3, va_anon + off, fr, 0x07) < 0) {
+        if (fr)
+          pmm_free(fr);
+        for (size_t u = 0; u < off; u += 4096) {
+          spin_lock_irqsave(&vm_lock, &fl);
+          munmap_page(current->cr3, va_anon + u);
+          spin_unlock_irqrestore(&vm_lock, fl);
+        }
         return -ENOMEM;
-      vm_map((uint64_t *)current->cr3, va_anon + off, fr, 0x07);
+      }
       memset((void *)fr, 0, 4096);
     }
     return va_anon;
@@ -1200,15 +1231,12 @@ static void munmap_page(uint64_t cr3, uint64_t a) {
     int i2 = (a >> 21) & 511;
     if (!(p2[i2] & 1)) return;
 
-    if (p2[i2] & 0x80) {
-        p2[i2] = 0;
-        __asm__ volatile("invlpg (%0)" ::"r"(a) : "memory");
+    if (p2[i2] & 0x80)
         return;
-    }
     uint64_t *p1 = (uint64_t *)(p2[i2] & 0x000FFFFFFFFFF000ULL);
     int i1 = (a >> 12) & 511;
     uint64_t pte = p1[i1];
-    if (pte & 1) {
+    if ((pte & 1) && (pte & 4)) {
         uint64_t phys = pte & 0x000FFFFFFFFFF000ULL;
         p1[i1] = 0;
         __asm__ volatile("invlpg (%0)" ::"r"(a) : "memory");
@@ -1600,6 +1628,7 @@ static int64_t sys_fork(struct pt_regs *r) {
   ctx->fsbase = current->fsbase;
   int rc = kthread_create(fork_trampoline, ctx, "fork");
   if (rc < 0) {
+    vm_free_as((uint64_t *)ctx->cr3);
     kfree(ctx);
     return rc;
   }

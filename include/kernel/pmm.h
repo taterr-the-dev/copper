@@ -6,6 +6,9 @@
 void pmm_init(void);
 uint64_t pmm_alloc(void);
 void pmm_free(uint64_t addr);
+void pmm_ref(uint64_t addr);
+int pmm_refcount(uint64_t addr);
+void pmm_stats(uint64_t *total, uint64_t *free_pages);
 
 void pmm_add_region(uint64_t base, uint64_t len);
 void pmm_reserve_region(uint64_t base, uint64_t len);

@@ -9,11 +9,14 @@
 #define MAX_MEM (1024ULL * 1024 * 1024)
 #define NF (MAX_MEM / 4096)
 static uint8_t bmp[NF / 8];
+static uint8_t refs[NF];
+static int oom_reported;
 static size_t hint;
 DEFINE_SPINLOCK(pmm_lock);
 
 void pmm_init(void) {
     memset(bmp, 0xFF, sizeof(bmp));
+    memset(refs, 0, sizeof(refs));
     hint = 0;
     spinlock_init(&pmm_lock);
     con_puts("[PMM] Initialized.\n");
@@ -54,6 +57,7 @@ uint64_t pmm_alloc(void) {
     for (size_t i = hint; i < NF; i++) {
         if (!(bmp[i / 8] & (1 << (i & 7)))) {
             bmp[i / 8] |= 1 << (i & 7);
+            refs[i] = 1;
             a = BASE + i * 4096;
             hint = i + 1;
             break;
@@ -64,9 +68,31 @@ uint64_t pmm_alloc(void) {
         memset((void *)a, 0, 4096);
         return a;
     }
-    con_puts("[PMM] FATAL: Out of physical memory!\n");
-    for (;;) __asm__ volatile("cli; hlt");
+    if (!oom_reported) {
+        oom_reported = 1;
+        con_puts("[PMM] Out of physical memory!\n");
+    }
     return 0;
+}
+
+void pmm_ref(uint64_t a) {
+    if (a < BASE) return;
+    size_t i = (a - BASE) / 4096;
+    uint64_t flags;
+    spin_lock_irqsave(&pmm_lock, &flags);
+    if (i < NF && refs[i] && refs[i] < 255) refs[i]++;
+    spin_unlock_irqrestore(&pmm_lock, flags);
+}
+
+int pmm_refcount(uint64_t a) {
+    if (a < BASE) return 0;
+    size_t i = (a - BASE) / 4096;
+    uint64_t flags;
+    int r = 0;
+    spin_lock_irqsave(&pmm_lock, &flags);
+    if (i < NF) r = refs[i];
+    spin_unlock_irqrestore(&pmm_lock, flags);
+    return r;
 }
 
 void pmm_free(uint64_t a) {
@@ -74,11 +100,26 @@ void pmm_free(uint64_t a) {
     size_t i = (a - BASE) / 4096;
     uint64_t flags;
     spin_lock_irqsave(&pmm_lock, &flags);
-    if (i < NF) {
-        bmp[i / 8] &= ~(1 << (i & 7));
-        if (i < hint) hint = i;
+    if (i < NF && refs[i]) {
+        if (--refs[i] == 0) {
+            bmp[i / 8] &= ~(1 << (i & 7));
+            if (i < hint) hint = i;
+            oom_reported = 0;
+        }
     }
     spin_unlock_irqrestore(&pmm_lock, flags);
+}
+void pmm_stats(uint64_t *total, uint64_t *free_pages) {
+    uint64_t flags;
+    uint64_t f = 0, u = 0;
+    spin_lock_irqsave(&pmm_lock, &flags);
+    for (size_t i = 0; i < NF; i++) {
+        if (refs[i]) u++;
+        else if (!(bmp[i / 8] & (1 << (i & 7)))) f++;
+    }
+    spin_unlock_irqrestore(&pmm_lock, flags);
+    *total = f + u;
+    *free_pages = f;
 }
 uint64_t pmm_alloc_contig_top(size_t pages, uint64_t min_addr, uint64_t max_addr) {
     uint64_t flags;
@@ -96,6 +137,7 @@ uint64_t pmm_alloc_contig_top(size_t pages, uint64_t min_addr, uint64_t max_addr
                 for (size_t k = 0; k < pages; k++) {
                     size_t j = idx + k;
                     bmp[j / 8] |= 1 << (j & 7);
+                    refs[j] = 1;
                 }
                 result = BASE + (uint64_t)idx * 4096;
                 break;

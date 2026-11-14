@@ -18,17 +18,26 @@ void vm_init(void) {
   __asm__ volatile("mov %%cr3,%0" : "=r"(boot_cr3));
   spinlock_init(&vm_lock);
 }
+static uint64_t *alloc_table(void) {
+  uint64_t f = pmm_alloc();
+  return (uint64_t *)f;
+}
+
 static int map_nolock(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl,
                       int only_if_absent) {
   int i4 = (va >> 39) & 511, i3 = (va >> 30) & 511, i2 = (va >> 21) & 511,
       i1 = (va >> 12) & 511;
   if (!(p4[i4] & PTE_P)) {
     uint64_t f = pmm_alloc();
+    if (!f)
+      return -1;
     p4[i4] = f | 0x07;
   }
   uint64_t *p3 = (uint64_t *)(p4[i4] & MASK);
   if (!(p3[i3] & PTE_P)) {
     uint64_t f = pmm_alloc();
+    if (!f)
+      return -1;
     p3[i3] = f | 0x07;
   }
   uint64_t *p2 = (uint64_t *)(p3[i3] & MASK);
@@ -37,6 +46,8 @@ static int map_nolock(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl,
     uint64_t base2 = old & ~0x1FFFFFULL;
     uint64_t fl2 = (old & 0xFFF) & ~0x80ULL;
     uint64_t pt = pmm_alloc();
+    if (!pt)
+      return -1;
     uint64_t *p1t = (uint64_t *)pt;
     for (int j = 0; j < 512; j++)
       p1t[j] = (base2 + (uint64_t)j * 4096) | fl2 | 0x01;
@@ -44,19 +55,28 @@ static int map_nolock(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl,
   }
   if (!(p2[i2] & PTE_P)) {
     uint64_t f = pmm_alloc();
+    if (!f)
+      return -1;
     p2[i2] = f | 0x07;
   }
   uint64_t *p1 = (uint64_t *)(p2[i2] & MASK);
   if (only_if_absent && (p1[i1] & PTE_P))
     return 0;
+  uint64_t old = p1[i1];
   p1[i1] = pa | fl;
+  if ((old & PTE_P) && (old & 0x4) && (old & MASK) != (pa & MASK))
+    pmm_free(old & MASK);
   return 1;
 }
-void vm_map(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl) {
+int vm_map_chk(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl) {
   uint64_t flags;
   spin_lock_irqsave(&vm_lock, &flags);
-  map_nolock(p4, va, pa, fl, 0);
+  int r = map_nolock(p4, va, pa, fl, 0);
   spin_unlock_irqrestore(&vm_lock, flags);
+  return r < 0 ? -1 : 0;
+}
+void vm_map(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl) {
+  vm_map_chk(p4, va, pa, fl);
 }
 int vm_map_if_absent(uint64_t *p4, uint64_t va, uint64_t pa, uint64_t fl) {
   uint64_t flags;
@@ -75,117 +95,135 @@ void vm_map_kernel_shared(uint64_t va, uint64_t pa, uint64_t fl) {
   spin_unlock_irqrestore(&vm_lock, flags);
 }
 
-uint64_t *vm_new_as(void) {
-  uint64_t *p4 = (uint64_t *)pmm_alloc();
-  uint64_t *p3 = (uint64_t *)pmm_alloc();
-  uint64_t *p2 = (uint64_t *)pmm_alloc();
+static void free_as_nolock(uint64_t *p4) {
+  for (int i4 = 0; i4 < 256; i4++) {
+    if (!(p4[i4] & PTE_P))
+      continue;
+    uint64_t *p3 = (uint64_t *)(p4[i4] & MASK);
+    for (int i3 = 0; i3 < 512; i3++) {
+      if (!(p3[i3] & PTE_P) || (p3[i3] & 0x80))
+        continue;
+      uint64_t *p2 = (uint64_t *)(p3[i3] & MASK);
+      for (int i2 = 0; i2 < 512; i2++) {
+        if (!(p2[i2] & PTE_P) || (p2[i2] & 0x80))
+          continue;
+        uint64_t *p1 = (uint64_t *)(p2[i2] & MASK);
+        for (int i1 = 0; i1 < 512; i1++) {
+          if ((p1[i1] & PTE_P) && (p1[i1] & 0x4))
+            pmm_free(p1[i1] & MASK);
+        }
+        pmm_free((uint64_t)p1);
+      }
+      pmm_free((uint64_t)p2);
+    }
+    pmm_free((uint64_t)p3);
+  }
+  pmm_free((uint64_t)p4);
+}
 
-  for (int i = 0; i < 512; i++) {
-    p4[i] = 0;
-    p3[i] = 0;
-    p2[i] = (uint64_t)i * 0x200000 | 0x83;
+void vm_free_as(uint64_t *p4) {
+  if (!p4 || (uint64_t)p4 == boot_cr3)
+    return;
+  uint64_t flags;
+  spin_lock_irqsave(&vm_lock, &flags);
+  free_as_nolock(p4);
+  spin_unlock_irqrestore(&vm_lock, flags);
+}
+
+uint64_t *vm_new_as(void) {
+  uint64_t *p4 = alloc_table();
+  uint64_t *p3 = alloc_table();
+  uint64_t *p2 = alloc_table();
+  uint64_t *p1 = alloc_table();
+  if (!p4 || !p3 || !p2 || !p1) {
+    if (p4) pmm_free((uint64_t)p4);
+    if (p3) pmm_free((uint64_t)p3);
+    if (p2) pmm_free((uint64_t)p2);
+    if (p1) pmm_free((uint64_t)p1);
+    return 0;
   }
 
-  uint64_t *p1 = (uint64_t *)pmm_alloc();
   for (int i = 0; i < 512; i++) {
-    if (i == 0) {
-      p1[i] = 0;
-    } else {
-      p1[i] = (uint64_t)i * 0x1000 | 0x03;
-    }
+    p2[i] = (uint64_t)i * 0x200000 | 0x83;
+    p1[i] = i ? ((uint64_t)i * 0x1000 | 0x03) : 0;
   }
   p2[0] = (uint64_t)p1 | 0x07;
-
   p3[0] = (uint64_t)p2 | 0x07;
   p4[0] = (uint64_t)p3 | 0x07;
-  p4[KSHARED_IDX] = ((uint64_t *)boot_cr3)[KSHARED_IDX];
+  uint64_t *boot = (uint64_t *)boot_cr3;
+  for (int i = 256; i < 512; i++)
+    p4[i] = boot[i];
   return p4;
 }
 
 static uint64_t *clone_nolock(uint64_t *src) {
-  uint64_t *p4 = (uint64_t *)pmm_alloc();
+  uint64_t *p4 = alloc_table();
   if (!p4)
     return 0;
 
   for (int i4 = 0; i4 < 512; i4++) {
-    if (!(src[i4] & 1)) {
-      p4[i4] = 0;
+    if (!(src[i4] & 1))
       continue;
-    }
     if (i4 >= 256) {
       p4[i4] = src[i4];
       continue;
     }
 
     uint64_t *s3 = (uint64_t *)(src[i4] & MASK);
-    uint64_t *d3 = (uint64_t *)pmm_alloc();
+    uint64_t *d3 = alloc_table();
     if (!d3)
-      return 0;
+      goto fail;
+    p4[i4] = (uint64_t)d3 | 0x07;
 
     for (int i3 = 0; i3 < 512; i3++) {
-      if (!(s3[i3] & 1)) {
-        d3[i3] = 0;
+      if (!(s3[i3] & 1))
         continue;
-      }
       if (s3[i3] & 0x80) {
         d3[i3] = s3[i3];
         continue;
       }
 
       uint64_t *s2 = (uint64_t *)(s3[i3] & MASK);
-      uint64_t *d2 = (uint64_t *)pmm_alloc();
+      uint64_t *d2 = alloc_table();
       if (!d2)
-        return 0;
+        goto fail;
+      d3[i3] = (uint64_t)d2 | 0x07;
 
       for (int i2 = 0; i2 < 512; i2++) {
-        if (!(s2[i2] & 1)) {
-          d2[i2] = 0;
+        if (!(s2[i2] & 1))
           continue;
-        }
-
         if (s2[i2] & 0x80) {
-          uint64_t *d1 = (uint64_t *)pmm_alloc();
-          uint64_t *s1_new = (uint64_t *)pmm_alloc();
-          if (!d1 || !s1_new)
-            return 0;
-
-          uint64_t base = s2[i2] & 0x000FFFFFE00000ULL;
-          uint64_t flags = (s2[i2] & 0x1FF) & ~0x80ULL;
-          uint64_t cow_flags = (flags & ~0x02) | PTE_COW;
-
-          for (int i1 = 0; i1 < 512; i1++) {
-            uint64_t pg = base + i1 * 4096;
-            d1[i1] = pg | cow_flags;
-            s1_new[i1] = pg | cow_flags;
-          }
-          d2[i2] = (uint64_t)d1 | 0x07;
-          s2[i2] = (uint64_t)s1_new | 0x07;
+          d2[i2] = s2[i2];
           continue;
         }
 
         uint64_t *s1 = (uint64_t *)(s2[i2] & MASK);
-        uint64_t *d1 = (uint64_t *)pmm_alloc();
+        uint64_t *d1 = alloc_table();
         if (!d1)
-          return 0;
+          goto fail;
+        d2[i2] = (uint64_t)d1 | 0x07;
 
         for (int i1 = 0; i1 < 512; i1++) {
-          if (s1[i1] & 1) {
-            uint64_t oldpg = s1[i1] & MASK;
-            uint64_t flags = s1[i1] & 0xFFF;
-            uint64_t cow_flags = (flags & ~0x02) | PTE_COW;
-
-            d1[i1] = oldpg | cow_flags;
-            s1[i1] = oldpg | cow_flags;
-          } else
-            d1[i1] = 0;
+          uint64_t e = s1[i1];
+          if (!(e & 1))
+            continue;
+          if (!(e & 0x4)) {
+            d1[i1] = e;
+            continue;
+          }
+          uint64_t cow = (e & ~0x02ULL) | PTE_COW;
+          s1[i1] = cow;
+          d1[i1] = cow;
+          pmm_ref(e & MASK);
         }
-        d2[i2] = (uint64_t)d1 | 0x07;
       }
-      d3[i3] = (uint64_t)d2 | 0x07;
     }
-    p4[i4] = (uint64_t)d3 | 0x07;
   }
   return p4;
+
+fail:
+  free_as_nolock(p4);
+  return 0;
 }
 
 uint64_t *vm_clone_as(uint64_t *src) {
@@ -253,13 +291,19 @@ static int cow_nolock(uint64_t *cr3, uint64_t va) {
   }
 
   uint64_t oldpg = p1e & MASK;
+  if (pmm_refcount(oldpg) <= 1) {
+    p1[p1_idx] = (p1e & ~PTE_COW) | 0x02;
+    __asm__ volatile("invlpg (%0)" ::"r"(va) : "memory");
+    return 1;
+  }
   uint64_t newpg = pmm_alloc();
   if (!newpg) {
-    return 0;
+    return -1;
   }
 
   memcpy((void *)newpg, (void *)oldpg, 4096);
   p1[p1_idx] = newpg | ((p1e & 0xFFF) & ~PTE_COW) | 0x02;
+  pmm_free(oldpg);
   __asm__ volatile("invlpg (%0)" ::"r"(va) : "memory");
   return 1;
 }

@@ -4,6 +4,7 @@
 #include <kernel/proc.h>
 #include <kernel/console.h>
 #include <kernel/syscall.h>
+#include <kernel/pmm.h>
 
 extern uint64_t timer_ticks;
 extern int proc_get_task_fd_path(int pid, int fd, char *buf, size_t sz);
@@ -33,7 +34,16 @@ static const char *static_names[] = {"meminfo", "uptime", "version", "cpuinfo", 
 
 static void gen_static(int idx, char *b, int *o) {
     switch (idx) {
-    case 0: pstr(b, o, "MemTotal:       16384 kB\nMemFree:        12000 kB\n"); break;
+    case 0: {
+        uint64_t tot, fr;
+        pmm_stats(&tot, &fr);
+        pstr(b, o, "MemTotal:       ");
+        pdec(b, o, tot * 4);
+        pstr(b, o, " kB\nMemFree:        ");
+        pdec(b, o, fr * 4);
+        pstr(b, o, " kB\n");
+        break;
+    }
     case 1: pdec(b, o, timer_ticks / 100); pstr(b, o, ".00 0.00 0\n"); break;
     case 2: pstr(b, o, "Copper kernel 0.1.0 x86_64\n"); break;
     case 3: pstr(b, o, "processor : 0\nvendor_id : GenuineKernel\nmodel name : Copper x86_64\n"); break;

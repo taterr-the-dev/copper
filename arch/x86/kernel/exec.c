@@ -76,7 +76,11 @@ static uint64_t load_mem(uint8_t *b, uint64_t *cr3, uint64_t base, char *interp,
         return 0;
       }
       uint64_t target_va = s + j * 4096;
-      vm_map(cr3, target_va, pg, 0x07);
+      if (vm_map_chk(cr3, target_va, pg, 0x07) < 0) {
+        pmm_free(pg);
+        kfree(pages);
+        return 0;
+      }
       memset((void *)pg, 0, 4096);
       pages[j] = pg;
     }
@@ -152,6 +156,12 @@ void close_cloexec_fds(int pid) {
   }
 }
 
+static int exec_abort(uint64_t saved_cr3, uint64_t *new_cr3, int rc) {
+  __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
+  vm_free_as(new_cr3);
+  return rc;
+}
+
 int execve(const char *path, char *const *argv, char *const *envp) {
 	close_cloexec_fds(current->pid);
   static char resolved_path[256];
@@ -212,6 +222,9 @@ int execve(const char *path, char *const *argv, char *const *envp) {
   __asm__ volatile("mov %0,%%cr3" ::"r"(boot_cr3) : "memory");
   uint64_t *new_cr3 = vm_new_as();
   __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
+  if (!new_cr3) {
+    return -ENOMEM;
+  }
 
   if (g_fb_phys && g_fb_size) {
     uint64_t fb_va_base = 0xFFFF900000000000ULL;
@@ -221,35 +234,27 @@ int execve(const char *path, char *const *argv, char *const *envp) {
         vm_map(new_cr3, fb_va_base + (i * 4096), fb_start_page + (i * 4096), 0x03);
     }
   }
-  if (!new_cr3) {
-    return -1;
-  }
-
   struct fs_file f;
   int open_res = vfs_open(k_path, &f);
 
   if (open_res < 0) {
-    __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
-    return -ENOENT;
+    return exec_abort(saved_cr3, new_cr3, -ENOENT);
   }
   if (f.size > EXEC_BUF_SIZE) {
     vfs_close(&f);
-    __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
-    return -1;
+    return exec_abort(saved_cr3, new_cr3, -1);
   }
 
   if (!exec_buf_get()) {
     vfs_close(&f);
-    __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
-    return -1;
+    return exec_abort(saved_cr3, new_cr3, -ENOMEM);
   }
 
   int64_t read_sz = vfs_read(&f, exec_buf, f.size);
   vfs_close(&f);
 
   if (read_sz < 0) {
-    __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
-    return -1;
+    return exec_abort(saved_cr3, new_cr3, -1);
   }
 
   if (exec_buf[0] == '#' && exec_buf[1] == '!') {
@@ -261,14 +266,14 @@ int execve(const char *path, char *const *argv, char *const *envp) {
            o < 127)
       interp[o++] = exec_buf[idx++];
     interp[o] = 0;
+    vm_free_as(new_cr3);
     return execve(interp, (char *const *)k_argv, (char *const *)k_envp);
   }
 
   Elf64_Ehdr *e = (Elf64_Ehdr *)exec_buf;
   if (e->e_ident[0] != 0x7f || e->e_ident[1] != 'E' || e->e_ident[2] != 'L' ||
       e->e_ident[3] != 'F') {
-    __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
-    return -1;
+    return exec_abort(saved_cr3, new_cr3, -1);
   }
 
   uint64_t main_base = (e->e_type == ET_DYN) ? 0x400000 : 0;
@@ -294,8 +299,7 @@ int execve(const char *path, char *const *argv, char *const *envp) {
       load_mem(exec_buf, new_cr3, base, interp_path, sizeof interp_path);
 
   if (!entry) {
-    __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
-    return -1;
+    return exec_abort(saved_cr3, new_cr3, -ENOMEM);
   }
   uint64_t interp_base = 0, interp_entry = 0;
   if (interp_path[0]) {
@@ -318,10 +322,12 @@ int execve(const char *path, char *const *argv, char *const *envp) {
   for (int i = 0; i < USTACK_NP; i++) {
     frames[i] = pmm_alloc();
     if (!frames[i]) {
-      __asm__ volatile("mov %0,%%cr3" ::"r"(saved_cr3) : "memory");
-      return -1;
+      return exec_abort(saved_cr3, new_cr3, -ENOMEM);
     }
-    vm_map(new_cr3, USTACK_VA + i * 4096, frames[i], 0x07);
+    if (vm_map_chk(new_cr3, USTACK_VA + i * 4096, frames[i], 0x07) < 0) {
+      pmm_free(frames[i]);
+      return exec_abort(saved_cr3, new_cr3, -ENOMEM);
+    }
     memset((void *)frames[i], 0, 4096);
   }
 
@@ -444,6 +450,7 @@ int execve(const char *path, char *const *argv, char *const *envp) {
 
   uint64_t final_entry = interp_entry ? interp_entry : entry;
 
+  uint64_t old_cr3 = current->cr3;
   current->cr3 = (uint64_t)new_cr3;
   current->ustack_va = USTACK_VA;
   current->ustack_np = USTACK_NP;
@@ -454,7 +461,13 @@ int execve(const char *path, char *const *argv, char *const *envp) {
   uint64_t tls_page = pmm_alloc();
   if (tls_page) {
     uint64_t tls_va = 0x00007FFF80000000ULL;
-    vm_map(new_cr3, tls_va, tls_page, 0x07);
+    if (vm_map_chk(new_cr3, tls_va, tls_page, 0x07) < 0) {
+      pmm_free(tls_page);
+      tls_page = 0;
+    }
+  }
+  if (tls_page) {
+    uint64_t tls_va = 0x00007FFF80000000ULL;
     memset((void *)tls_page, 0, 4096);
 
     uint32_t lo, hi;
@@ -470,6 +483,8 @@ int execve(const char *path, char *const *argv, char *const *envp) {
   }
 
   __asm__ volatile("mov %0, %%cr3" ::"r"((uint64_t)new_cr3) : "memory");
+  if (old_cr3 && old_cr3 != boot_cr3)
+    vm_free_as((uint64_t *)old_cr3);
   reset_mm_state(current->pid);
   enter_usermode(final_entry, R);
   return 0;

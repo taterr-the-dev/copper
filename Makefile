@@ -20,7 +20,7 @@ CC=clang
 AS=as
 LD=ld
 
-CFLAGS=-m64 -Wall -Wextra -Werror -fno-stack-protector -nostdlib -ffreestanding -g -mno-red-zone -mcmodel=kernel
+CFLAGS=-m64 -Wall -Wextra -Werror -fno-stack-protector -nostdlib -ffreestanding -g -mno-red-zone -mcmodel=kernel -MMD -MP
 CFLAGS+=-Iinclude -Iinclude/generated -Iarch/$(ARCH)/include
 ASFLAGS=--64
 LDFLAGS=-T linker.ld -g
