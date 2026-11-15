@@ -4,6 +4,8 @@
 .align 16
 .global current_kstack
 current_kstack: .quad 0
+.global force_iret
+force_iret: .byte 0
 .global saved_rsp
 saved_rsp:    .quad 0
 saved_rip:    .quad 0
@@ -42,6 +44,8 @@ syscall_entry:
     cli
     mov %rax, debug_syscall_ret(%rip)
     mov %rax, (%rsp)
+    cmpb $0, force_iret(%rip)
+    jne .Liret_path
     pop %rax
     pop %rbx
     pop %rcx
@@ -61,3 +65,26 @@ syscall_entry:
     pop %rcx                     /* rip */
     pop %rsp                     /* user rsp */
     sysretq
+.Liret_path:
+    movb $0, force_iret(%rip)
+    pushq $0x23
+    pushq 144(%rsp)
+    pushq 136(%rsp)
+    pushq $0x2b
+    pushq 160(%rsp)
+    mov 40(%rsp), %rax
+    mov 48(%rsp), %rbx
+    mov 56(%rsp), %rcx
+    mov 64(%rsp), %rdx
+    mov 72(%rsp), %rsi
+    mov 80(%rsp), %rdi
+    mov 88(%rsp), %rbp
+    mov 96(%rsp), %r8
+    mov 104(%rsp), %r9
+    mov 112(%rsp), %r10
+    mov 120(%rsp), %r11
+    mov 128(%rsp), %r12
+    mov 136(%rsp), %r13
+    mov 144(%rsp), %r14
+    mov 152(%rsp), %r15
+    iretq

@@ -115,10 +115,10 @@ __attribute__((unused)) static size_t safe_strnlen(const char *s, size_t maxlen)
   return len;
 }
 
-static int64_t sys_getpid(void) { return current ? current->pid : 0; }
+static int64_t sys_getpid(void) { return current ? current->tgid : 0; }
 static int64_t sys_gettid(void) { return current ? current->pid : 0; }
 static int64_t sys_getppid(void) {
-  return current && current->parent ? current->parent->pid : 0;
+  return current ? proc_getppid() : 0;
 }
 static int64_t sys_getuid(void) { return 0; }
 static int64_t sys_getgid(void) { return 0; }
@@ -141,7 +141,7 @@ static void cwd_init(void) {
 
 static inline char *cwd_of(void) {
   cwd_init();
-  int p = current ? current->pid : 0;
+  int p = current ? current->tgid : 0;
   if (p < 0 || p >= 64)
     p = 0;
   return cwd_table[p];
@@ -205,7 +205,7 @@ void resolve_path(const char *p, char *out, size_t out_size) {
 }
 
 struct fdent *fdtable_of(void) {
-  int p = current ? current->pid : 0;
+  int p = current ? current->tgid : 0;
   if (p < 0 || p >= 64)
     p = 0;
   return fdtables[p];
@@ -927,7 +927,7 @@ static uint64_t user_mmap_base[64];
 static void munmap_page(uint64_t cr3, uint64_t a);
 
 static int64_t sys_brk(uint64_t a) {
-  int pid = current ? current->pid : 0;
+  int pid = current ? current->tgid : 0;
   if (pid >= 64)
     return -ENOMEM;
   uint64_t fl, cur, base;
@@ -1012,7 +1012,7 @@ int handle_file_page_fault(uint64_t addr, uint64_t err_code) {
     return 0;
 
   uint64_t page_addr = addr & ~0xFFF;
-  int pid = current ? current->pid : 0;
+  int pid = current ? current->tgid : 0;
 
   struct file_vma v;
   int found = 0;
@@ -1072,7 +1072,7 @@ int handle_file_page_fault(uint64_t addr, uint64_t err_code) {
 
 static int64_t sys_mmap(uint64_t a, size_t len, int p, int f, int fd,
                         int64_t o) {
-  int pid = current ? current->pid : 0;
+  int pid = current ? current->tgid : 0;
   if (pid >= 64)
     return -ENOMEM;
   if (len == 0)
@@ -1296,7 +1296,7 @@ static int64_t sys_mprotect(uint64_t addr, size_t len, int prot) {
   if (addr >= 0x0000800000000000ULL || addr + len > 0x0000800000000000ULL) {
     return -ENOMEM;
   }
-  int pid = current ? current->pid : 0;
+  int pid = current ? current->tgid : 0;
   uint64_t fl;
   spin_lock_irqsave(&vm_lock, &fl);
   for (int i = 0; i < MAX_VMAS; i++) {
@@ -1345,14 +1345,16 @@ static int64_t sys_nanosleep(const struct timespec *req, struct timespec *rem) {
   current->sleep_until = timer_ticks + ticks;
   current->state = T_BLOCKED;
   yield();
-  if (rem && access_ok(rem, sizeof(struct timespec))) {
-    if (current->sleep_until > timer_ticks) {
-      uint64_t remaining_ms = current->sleep_until - timer_ticks;
-      rem->tv_sec = remaining_ms / 1000;
-      rem->tv_nsec = (remaining_ms % 1000) * 1000000;
-      return -EINTR;
+  if (current->sleep_until != 0 && timer_ticks < current->sleep_until) {
+    uint64_t left_ns = (current->sleep_until - timer_ticks) * 10000000ULL;
+    current->sleep_until = 0;
+    if (rem && access_ok(rem, sizeof(struct timespec))) {
+      rem->tv_sec = left_ns / 1000000000ULL;
+      rem->tv_nsec = left_ns % 1000000000ULL;
     }
+    return -EINTR;
   }
+  current->sleep_until = 0;
   return 0;
 }
 
@@ -1415,6 +1417,11 @@ static int64_t sys_arch_prctl(int c, uint64_t a) {
     return 0;
   return 0;
 }
+static int64_t sys_exit_group(int c) {
+  do_exit_group(c);
+  return 0;
+}
+
 static int64_t sys_exit(int c) {
 #ifdef CONFIG_DEBUG_SYSCALL
   con_puts("[exit] code=");
@@ -1514,14 +1521,9 @@ static int64_t sys_truncate(const char *path, uint64_t length) {
     vfs_close(&f);
     return r;
 }
-static int64_t sys_futex(int *u, int op, int val, int64_t to) {
-  (void)to;
-  op &= 127;
-  if (op == 0)
-    return futex_wait((uint64_t *)u, val);
-  if (op == 1)
-    return futex_wake((uint64_t *)u, val);
-  return -ENOSYS;
+static int64_t sys_futex(struct pt_regs *r) {
+  return futex_op((uint32_t *)r->rdi, (int)r->rsi, (uint32_t)r->rdx, r->r10,
+                  (uint32_t *)r->r8, (uint32_t)r->r9);
 }
 
 struct fork_ctx {
@@ -1545,6 +1547,9 @@ struct fork_ctx {
   uint64_t rflags;
   uint64_t cr3;
   uint64_t fsbase;
+  uint64_t ctid;
+  int set_tid;
+  int clear_tid;
 };
 
 __attribute__((naked, unused)) static void fork_iretq( __attribute__((unused)) struct fork_ctx *ctx) {
@@ -1592,11 +1597,13 @@ static void fork_trampoline(void *arg) {
                    "a"((uint32_t)(ctx.fsbase & 0xFFFFFFFF)),
                    "d"((uint32_t)(ctx.fsbase >> 32))
                    : "memory");
+  if (ctx.set_tid || ctx.clear_tid)
+    proc_thread_started(ctx.ctid, ctx.set_tid, ctx.clear_tid);
   fork_iretq(&ctx);
   __builtin_unreachable();
 }
 
-static int64_t sys_fork(struct pt_regs *r) {
+static int64_t do_clone(struct pt_regs *r, uint64_t flags, uint64_t stack, uint64_t ptid, uint64_t ctid, uint64_t tls) {
   struct fork_ctx *ctx = kmalloc(sizeof(struct fork_ctx));
   if (!ctx)
     return -ENOMEM;
@@ -1617,25 +1624,51 @@ static int64_t sys_fork(struct pt_regs *r) {
   ctx->r15 = r->r15;
   ctx->rip = r->saved_rip;
   ctx->rsp = r->saved_rsp;
-  if (r->rax == 56 && r->rsi != 0 && r->rsi > 0x10000 &&
-      r->rsi < 0x0000800000000000ULL) {
-    ctx->rsp = r->rsi;
+  int thread = (flags & CLONE_THREAD) != 0;
+  if (thread && (!(flags & CLONE_VM) || !(flags & CLONE_SIGHAND))) {
+    kfree(ctx);
+    return -EINVAL;
+  }
+  if (stack) {
+    if (stack < 0x10000 || stack >= 0x0000800000000000ULL) {
+      kfree(ctx);
+      return -EINVAL;
+    }
+    ctx->rsp = stack;
   }
   ctx->rflags = r->saved_rflags | 0x200;
-  ctx->cr3 = (uint64_t)vm_clone_as((uint64_t *)current->cr3);
-  if (!ctx->cr3) {
-    kfree(ctx);
-    return -ENOMEM;
+  if (thread) {
+    ctx->cr3 = current->cr3;
+  } else {
+    ctx->cr3 = (uint64_t)vm_clone_as((uint64_t *)current->cr3);
+    if (!ctx->cr3) {
+      kfree(ctx);
+      return -ENOMEM;
+    }
   }
-  ctx->fsbase = current->fsbase;
-  int rc = kthread_create(fork_trampoline, ctx, "fork");
+  ctx->fsbase = (flags & CLONE_SETTLS) ? tls : current->fsbase;
+  ctx->ctid = ctid;
+  ctx->set_tid = (flags & CLONE_CHILD_SETTID) ? 1 : 0;
+  ctx->clear_tid = (flags & CLONE_CHILD_CLEARTID) ? 1 : 0;
+  int rc = thread ? thread_create(fork_trampoline, ctx, "thread")
+                  : kthread_create(fork_trampoline, ctx, "fork");
   if (rc < 0) {
-    vm_free_as((uint64_t *)ctx->cr3);
+    if (!thread)
+      vm_free_as((uint64_t *)ctx->cr3);
     kfree(ctx);
-    return rc;
+    return rc == -11 ? -EAGAIN : rc;
   }
 
-  int parent_pid = current->pid;
+  task_fpu_inherit(rc);
+  if (flags & CLONE_PARENT_SETTID) {
+    uint32_t tid = (uint32_t)rc;
+    proc_user_write(ptid, &tid, 4);
+  }
+  if (thread)
+    return rc;
+  proc_inherit_signals(rc);
+
+  int parent_pid = current->tgid;
   if (parent_pid >= 0 && parent_pid < 64 && rc >= 0 && rc < 64) {
     memcpy(fdtables[rc], fdtables[parent_pid], sizeof(fdtables[0]));
     for (int i = 0; i < MAXFD; i++) {
@@ -1664,6 +1697,14 @@ static int64_t sys_fork(struct pt_regs *r) {
   }
 
   return rc;
+}
+
+static int64_t sys_fork(struct pt_regs *r) {
+  return do_clone(r, 0, 0, 0, 0, 0);
+}
+
+static int64_t sys_clone(struct pt_regs *r) {
+  return do_clone(r, r->rdi, r->rsi, r->rdx, r->r10, r->r8);
 }
 
 static int64_t sys_dup2(int oldfd, int newfd) {
@@ -1873,19 +1914,29 @@ static int64_t sys_ioctl(int fd, unsigned long req, void *arg) {
 }
 
 static int64_t sys_rt_sigaction(int sig, const void *act, void *oact, size_t sz) {
-  (void)sz;
   if (!current) return -ESRCH;
+  if (sz != 8) return -EINVAL;
   if (sig < 1 || sig >= 64) return -EINVAL;
-  if (sig == SIGKILL || sig == SIGSTOP) return -EINVAL;
+  if (act && (sig == SIGKILL || sig == SIGSTOP)) return -EINVAL;
+  struct ksigaction *sa = sigact_slot(sig);
 
-  if (oact && access_ok(oact, sizeof(uint64_t))) {
-    uint64_t *old = (uint64_t *)oact;
-    *old = current->sig_handlers[sig];
+  if (oact) {
+    if (!access_ok(oact, sizeof(struct ksigaction))) return -EFAULT;
+    struct ksigaction o = *sa;
+    o.mask >>= 1;
+    memcpy(oact, &o, sizeof(struct ksigaction));
   }
 
-  if (act && access_ok(act, sizeof(uint64_t))) {
-    uint64_t *new_h = (uint64_t *)act;
-    current->sig_handlers[sig] = *new_h;
+  if (act) {
+    if (!access_ok(act, sizeof(struct ksigaction))) return -EFAULT;
+    struct ksigaction n;
+    memcpy(&n, act, sizeof n);
+    n.mask <<= 1;
+    n.mask &= ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
+    *sa = n;
+    if (n.handler == SIG_IGN || (n.handler == SIG_DFL && (sig == SIGCHLD || sig == SIGURG || sig == SIGWINCH))) {
+      __atomic_fetch_and(&current->sig_pending, ~(1ULL << sig), __ATOMIC_ACQ_REL);
+    }
   }
 
   return 0;
@@ -1895,11 +1946,11 @@ static int64_t sys_rt_sigprocmask(int how, const void *set, void *oldset, size_t
   if (!current) return -ESRCH;
 
   if (oldset && access_ok(oldset, sizeof(uint64_t))) {
-    *(uint64_t *)oldset = current->sig_mask;
+    *(uint64_t *)oldset = current->sig_mask >> 1;
   }
 
   if (set && access_ok(set, sizeof(uint64_t))) {
-    uint64_t new_mask = *(uint64_t *)set;
+    uint64_t new_mask = *(uint64_t *)set << 1;
 
     switch (how) {
       case 0:
@@ -1923,39 +1974,36 @@ static int64_t sys_rt_sigprocmask(int how, const void *set, void *oldset, size_t
 
 static int64_t sys_rt_sigreturn(struct pt_regs *r) {
   if (!current) return -ESRCH;
-
-  uint64_t frame_addr = r->saved_rsp;
-  if (!access_ok((void *)frame_addr, sizeof(struct signal_frame))) {
-    return -EFAULT;
-  }
-
-  struct signal_frame *frame = (struct signal_frame *)frame_addr;
-
-  r->rax = frame->rax;
-  r->rbx = frame->rbx;
-  r->rcx = frame->rcx;
-  r->rdx = frame->rdx;
-  r->rsi = frame->rsi;
-  r->rdi = frame->rdi;
-  r->rbp = frame->rbp;
-  r->r8 = frame->r8;
-  r->r9 = frame->r9;
-  r->r10 = frame->r10;
-  r->r11 = frame->r11;
-  r->r12 = frame->r12;
-  r->r13 = frame->r13;
-  r->r14 = frame->r14;
-  r->r15 = frame->r15;
-  r->saved_rip = frame->rip;
-  r->saved_rsp = frame->rsp;
-  r->saved_rflags = frame->rflags;
-
-  return 0;
+  return proc_sigreturn(r);
 }
 
-__attribute__((unused)) static int64_t sys_sigaltstack(const void *ss, void *old_ss) {
-  (void)ss;
-  (void)old_ss;
+static int64_t sys_sigaltstack(const void *ss, void *old_ss) {
+  struct kstack_t { uint64_t sp; int32_t flags; int32_t pad; uint64_t size; };
+  if (!current) return -ESRCH;
+  if (old_ss) {
+    if (!access_ok(old_ss, sizeof(struct kstack_t))) return -EFAULT;
+    struct kstack_t o;
+    o.sp = current->alt_sp;
+    o.size = current->alt_size;
+    o.pad = 0;
+    o.flags = (int32_t)current->alt_flags;
+    memcpy(old_ss, &o, sizeof o);
+  }
+  if (ss) {
+    if (!access_ok(ss, sizeof(struct kstack_t))) return -EFAULT;
+    struct kstack_t n;
+    memcpy(&n, ss, sizeof n);
+    if (n.flags & 2) {
+      current->alt_sp = 0;
+      current->alt_size = 0;
+      current->alt_flags = 2;
+    } else {
+      if (n.size < 2048) return -ENOMEM;
+      current->alt_sp = n.sp;
+      current->alt_size = n.size;
+      current->alt_flags = 0;
+    }
+  }
   return 0;
 }
 
@@ -2078,51 +2126,26 @@ static int64_t sys_reboot(int magic1, int magic2, int cmd, void *arg) {
 
 int64_t sys_kill(int pid, int sig) {
   if (sig < 0 || sig >= 64) return -EINVAL;
+  return proc_kill(pid, sig);
+}
 
-  int64_t ret = -EINVAL;
-  uint64_t flags;
-  spin_lock_irqsave(&sched_lock, &flags);
+static int64_t sys_tkill_nr(int tid, int sig) {
+  if (tid <= 0 || sig < 0 || sig >= 64) return -EINVAL;
+  return proc_tgkill(0, tid, sig);
+}
 
-  if (pid > 0) {
-    ret = -ESRCH;
-    struct task *t = current->next;
-    struct task *start = t;
-    do {
-      if ((int)t->pid == pid) {
-        if (sig)
-          __atomic_fetch_or(&t->sig_pending, 1ULL << sig, __ATOMIC_ACQ_REL);
-        if (sig && t->state == T_BLOCKED) {
-          t->state = T_READY;
-        }
-        ret = 0;
-        break;
-      }
-      t = t->next;
-    } while (t != start);
-  } else if (pid == 0 || pid == -1) {
-    struct task *t = current->next;
-    struct task *start = t;
-    do {
-      if (pid == -1 || t->pgrp == current->pgrp) {
-        __atomic_fetch_or(&t->sig_pending, 1ULL << sig, __ATOMIC_ACQ_REL);
-        if (t->state == T_BLOCKED) {
-          t->state = T_READY;
-        }
-      }
-      t = t->next;
-    } while (t != start);
-    ret = 0;
-  }
-
-  spin_unlock_irqrestore(&sched_lock, flags);
-  return ret;
+static int64_t sys_tgkill_nr(int tgid, int tid, int sig) {
+  if (tid <= 0 || tgid <= 0 || sig < 0 || sig >= 64) return -EINVAL;
+  return proc_tgkill(tgid, tid, sig);
 }
 
 static int64_t syscall_dispatch_inner(struct pt_regs *r);
 int64_t syscall_dispatch(struct pt_regs *r) {
   int64_t ret = syscall_dispatch_inner(r);
-  if (current && current->sig_pending)
-    proc_check_signals();
+  if (current && current->sig_pending) {
+    r->rax = (uint64_t)ret;
+    proc_deliver_regs(r);
+  }
   return ret;
 }
 
@@ -2193,6 +2216,7 @@ static int64_t syscall_dispatch_inner(struct pt_regs *r) {
   case 28:
     return 0;
   case 56:
+    return sys_clone(r);
   case 57: {
     int64_t ret = sys_fork(r);
     return ret;
@@ -2224,7 +2248,7 @@ static int64_t syscall_dispatch_inner(struct pt_regs *r) {
   case 157:
     return 0;
   case 202:
-    return sys_futex((int *)r->rdi, (int)r->rsi, (int)r->rdx, r->r10);
+    return sys_futex(r);
   case 217:
     return sys_getdents64((int)r->rdi, (void *)r->rsi, r->rdx);
   case 229:
@@ -2368,7 +2392,7 @@ static int64_t syscall_dispatch_inner(struct pt_regs *r) {
   case 121:
     return 0;
   case 131:
-    return 0;
+    return sys_sigaltstack((const void *)r->rdi, (void *)r->rsi);
   case 158:
     return sys_arch_prctl((int)r->rdi, r->rsi);
   case 165:
@@ -2381,11 +2405,9 @@ static int64_t syscall_dispatch_inner(struct pt_regs *r) {
   case 186:
     return sys_gettid();
   case 218: {
-    int *tidptr = (int *)r->rdi;
     int tid = current ? current->pid : 1;
-    if (tidptr && access_ok(tidptr, sizeof(int))) {
-      *tidptr = tid;
-    }
+    if (current)
+      current->clear_child_tid = r->rdi;
     return tid;
   }
   case 221:
@@ -2393,7 +2415,11 @@ static int64_t syscall_dispatch_inner(struct pt_regs *r) {
   case 228:
     return sys_clock_gettime((int)r->rdi, (struct timespec *)r->rsi);
   case 231:
-    return sys_exit((int)r->rdi);
+    return sys_exit_group((int)r->rdi);
+  case 200:
+    return sys_tkill_nr((int)r->rdi, (int)r->rsi);
+  case 234:
+    return sys_tgkill_nr((int)r->rdi, (int)r->rsi, (int)r->rdx);
   case 257: {
     int64_t ret =
         sys_openat((int)r->rdi, (const char *)r->rsi, (int)r->rdx, (int)r->r10);

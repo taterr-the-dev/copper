@@ -12,6 +12,8 @@
 #define T_BLOCKED 4
 #define T_DEAD 5
 
+struct int_frame;
+
 struct signal_frame {
     union {
         struct {
@@ -43,12 +45,50 @@ struct task {
     int ustack_np;
     char name[16];
     struct task *next;
-    uint64_t sig_handlers[64];
     uint64_t sig_pending;
     uint64_t sig_mask;
     int pgrp;
 		uint64_t sleep_until;
+    uint32_t tgid;
+    uint64_t clear_child_tid;
+    uint64_t futex_cr3;
+    uint32_t futex_bitset;
+    uint64_t alt_sp;
+    uint64_t alt_size;
+    uint32_t alt_flags;
+    uint8_t kill_quiet;
+    uint8_t waiting_child;
+    uint8_t fpu_raw[512 + 16];
+    uint8_t fxs_raw[512 + 16];
 };
+
+struct ksigaction {
+    uint64_t handler;
+    uint64_t flags;
+    uint64_t restorer;
+    uint64_t mask;
+};
+
+#define SA_NOCLDSTOP 0x00000001UL
+#define SA_NOCLDWAIT 0x00000002UL
+#define SA_SIGINFO   0x00000004UL
+#define SA_RESTORER  0x04000000UL
+#define SA_ONSTACK   0x08000000UL
+#define SA_RESTART   0x10000000UL
+#define SA_NODEFER   0x40000000UL
+#define SA_RESETHAND 0x80000000UL
+
+#define CLONE_VM             0x00000100UL
+#define CLONE_FS             0x00000200UL
+#define CLONE_FILES          0x00000400UL
+#define CLONE_SIGHAND        0x00000800UL
+#define CLONE_VFORK          0x00004000UL
+#define CLONE_PARENT         0x00008000UL
+#define CLONE_THREAD         0x00010000UL
+#define CLONE_SETTLS         0x00080000UL
+#define CLONE_PARENT_SETTID  0x00100000UL
+#define CLONE_CHILD_CLEARTID 0x00200000UL
+#define CLONE_CHILD_SETTID   0x01000000UL
 
 extern struct task *current;
 void scheduler_init(void);
@@ -59,10 +99,23 @@ void kthread_exit(void);
 void sched_tick(void);
 int wait4(int pid, int *status);
 void fork_enter(void *f);
+void task_fpu_inherit(int pid);
 void do_exit(int code);
-int futex_wait(uint64_t *u, int64_t val);
-int futex_wake(uint64_t *u, int n);
-
+int thread_create(void (*fn)(void *), void *arg, const char *name);
+void do_exit_group(int code);
+int futex_op(uint32_t *uaddr, int op, uint32_t val, uint64_t timeout, uint32_t *uaddr2, uint32_t val3);
+int futex_wake_key(uint64_t cr3, uint64_t addr, int n, uint32_t bitset);
+struct ksigaction *sigact_slot(int sig);
+void proc_inherit_signals(int child_pid);
+void proc_exec_prepare(void);
+int proc_tgkill(int tgid, int tid, int sig);
+int proc_group_post(int tgid, int sig);
+int proc_kill(int pid, int sig);
+int proc_getppid(void);
+int64_t proc_sigreturn(void *regs);
+void proc_deliver_regs(void *regs);
+void proc_user_write(uint64_t addr, const void *src, uint64_t n);
+void proc_thread_started(uint64_t ctid, int set_tid, int clear_tid);
 #define SIGHUP    1
 #define SIGINT    2
 #define SIGQUIT   3

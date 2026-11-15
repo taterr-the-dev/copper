@@ -163,7 +163,8 @@ static int exec_abort(uint64_t saved_cr3, uint64_t *new_cr3, int rc) {
 }
 
 int execve(const char *path, char *const *argv, char *const *envp) {
-	close_cloexec_fds(current->pid);
+  proc_exec_prepare();
+  close_cloexec_fds(current->tgid);
   static char resolved_path[256];
   static char k_path[256];
 
@@ -485,7 +486,7 @@ int execve(const char *path, char *const *argv, char *const *envp) {
   __asm__ volatile("mov %0, %%cr3" ::"r"((uint64_t)new_cr3) : "memory");
   if (old_cr3 && old_cr3 != boot_cr3)
     vm_free_as((uint64_t *)old_cr3);
-  reset_mm_state(current->pid);
+  reset_mm_state(current->tgid);
   enter_usermode(final_entry, R);
   return 0;
 }
